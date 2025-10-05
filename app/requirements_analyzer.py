@@ -60,6 +60,11 @@ def request_analysis(state: AgentState):
     - 모든 출력은 한국어로 작성한다.
     - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄격히 따른다. 필드 이름을 임의로 변경하지 않는다.
 
+
+    현재 계획된 기능: {functional_requirements}
+    현재 계획된 비기능적 요구: {non_functional_requirements}
+
+
     {format_instructions}
     """
     prompt = ChatPromptTemplate([
@@ -80,8 +85,10 @@ def ask_to_user(state: AgentState):
     """사용자에게 추가 정보를 요청하는 노드"""
     parser = JsonOutputParser(pydantic_object=UserQuestion)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
+   
+
     system_prompt = """
-    당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 개발팀이 보유한 정보와 대화 이력을 바탕으로, 사용자에게 추가로 확인해야 할 질문을 생성한다.
+    당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 개발팀이 요청한 정보와 대화 이력을 바탕으로, 사용자에게 추가로 확인해야 할 질문을 생성한다.
 
     [지침]
     - 대화 이력(conversation_history)의 맥락을 반영하되, 이미 물어본 질문은 반복하지 않는다.
@@ -99,16 +106,30 @@ def ask_to_user(state: AgentState):
     {format_instructions}
     """
 
+    chat_history = state["messages"]
+
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", "{question_to_user}")
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question_to_user}"),
     ])
     chain = prompt | llm | parser
     result = chain.invoke({
         "format_instructions": parser.get_format_instructions(),
-        "question_to_user": state["question_to_user"]
+        "question_to_user": state["question_to_user"],
+        "chat_history": chat_history
     })
-    return {"request": result.goal, "functional_requirements": result.functional_requirements, "non_functional_requirements": result.non_functional_requirements, "is_complete": result.is_complete, "question_to_user": result.question_to_user}
+
+    return {"messages": [AIMessage(content=result.question_to_user)], "question_to_user": result.question_to_user, "is_complete": result.is_complete}
+
+def user_response(state: AgentState):
+    """사용자의 응답을 받는 노드"""
+    response = input(state["question_to_user"])
+
+    return {"request": response, "messages": [HumanMessage(content=response)]}
+
+def is_complete(state: AgentState):
+    return state["is_complete"]
 
 def main():
     load_dotenv()
@@ -117,17 +138,15 @@ def main():
     workflow = StateGraph(AgentState)
 
     # 노드 추가
-    workflow.add_node("plan", request_analysis)
-    workflow.add_node("plan_reivew", ask_to_user)
-    workflow.add_node("generate_code", generate_code_node)
-    workflow.add_node("write_code", write_code_node)
+    workflow.add_node("request_analysis", request_analysis)
+    workflow.add_node("ask_to_user", ask_to_user)
+    workflow.add_node("user_response", user_response)
 
-    
-    workflow.add_edge(START, "plan") # 시작하면 plan 노드부터
-    workflow.add_edge("plan", "read_code")
-    workflow.add_edge("read_code", "generate_code")
-    workflow.add_edge("generate_code", "write_code")
-    workflow.add_edge("write_code", END) # write_code가 끝나면 종료
+    workflow.add_edge(START, "request_analysis") 
+    workflow.add_conditional_edges("request_analysis", is_complete,{True: END, False: "ask_to_user"})    
+    workflow.add_edge("ask_to_user", "user_response")
+    workflow.add_edge("user_response", "request_analysis")
+
 
 
 
