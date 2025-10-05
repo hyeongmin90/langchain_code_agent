@@ -4,10 +4,13 @@ from dotenv import load_dotenv
 import operator
 from typing import TypedDict, Annotated, List, Optional
 
-from langchain_core.pydantic_v1 import BaseModel, Field
+# Google Cloud 관련 경고 메시지 억제
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+
+from pydantic import BaseModel, Field
 from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
 
@@ -32,13 +35,16 @@ class AgentState(TypedDict):
 
 def request_analysis(state: AgentState):
     """사용자의 요청사항을 분석하고, 추가 정보가 필요한지 판단하는 노드"""
+    print("--- 📝 요구사항 분석 중... ---")
+
 
     parser = JsonOutputParser(pydantic_object=AnalysisResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     system_prompt = """
     당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 아래 규칙에 따라 대화를 분석하고 요구사항을 명확하고 실행 가능하게 정리하라.
     한번 확정된 요구사항은 다시 수정하지 않고 구현하기 때문에 추후에 기능이 추가되지 않도록 최대한 정확하고 세세하게 작성해야한다.
-
+    먼저 임의로 필요한 모든 기능에 대해 요구사항을 작성하고, 사용자의 응답을 받아 요구사항을 수정한다.
+    
     [목표]
     - 고객의 추상적 요구를 구체적이고 검증 가능한 요구사항으로 정제한다.
     - 기능적/비기능적 요구를 명확히 분리하고, 모호성을 제거한다.
@@ -67,29 +73,47 @@ def request_analysis(state: AgentState):
 
     {format_instructions}
     """
+
+    user_request = """
+    요청된 요구사항: {question_to_user}
+    그에 따른 사용자 응답: {request}
+    """
+
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", "{request}")
+        ("human", user_request)
     ])
 
     chain = prompt | llm | parser
 
     result = chain.invoke({
         "format_instructions": parser.get_format_instructions(),
-        "request": state["request"]
+        "request": state["request"],    
+        "question_to_user": state["question_to_user"],
+        "functional_requirements": state.get("functional_requirements", "아직 정의되지 않음"),
+        "non_functional_requirements": state.get("non_functional_requirements", "아직 정의되지 않음"),
     })
 
-    return {"request": result.goal, "functional_requirements": result.functional_requirements, "non_functional_requirements": result.non_functional_requirements, "is_complete": result.is_complete, "question_to_user": result.question_to_user}
+    return {
+        "request": result["goal"], 
+        "functional_requirements": result["functional_requirements"], 
+        "non_functional_requirements": result["non_functional_requirements"], 
+        "is_complete": result["is_complete"], 
+        "question_to_user": result["question_to_user"]
+    }
 
 def ask_to_user(state: AgentState):
     """사용자에게 추가 정보를 요청하는 노드"""
+
+    print("--- 📝 사용자에게 추가 정보를 요청 중... ---")
     parser = JsonOutputParser(pydantic_object=UserQuestion)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
    
 
     system_prompt = """
     당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 개발팀이 요청한 정보와 대화 이력을 바탕으로, 사용자에게 추가로 확인해야 할 질문을 생성한다.
-
+    
+    
     [지침]
     - 대화 이력(conversation_history)의 맥락을 반영하되, 이미 물어본 질문은 반복하지 않는다.
     - 질문은 구체적이고 답하기 쉽게 작성하며, 선택지나 예시를 덧붙여 응답 품질을 높인다.
@@ -111,27 +135,36 @@ def ask_to_user(state: AgentState):
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
         MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question_to_user}"),
+        ("human", "추가 정보가 필요합니다. 사용자에게 질문을 생성해주세요."),
     ])
+
     chain = prompt | llm | parser
     result = chain.invoke({
         "format_instructions": parser.get_format_instructions(),
-        "question_to_user": state["question_to_user"],
         "chat_history": chat_history
     })
 
-    return {"messages": [AIMessage(content=result.question_to_user)], "question_to_user": result.question_to_user, "is_complete": result.is_complete}
+    return {
+        "messages": [AIMessage(content=result["question_to_user"])], 
+        "question_to_user": result["question_to_user"], 
+        "is_complete": result["is_complete"]
+    }
+    
 
 def user_response(state: AgentState):
     """사용자의 응답을 받는 노드"""
-    response = input(state["question_to_user"])
+
+    print("--- 📝 사용자의 응답을 받는 중... ---")
+    print(f"\n❓ {state['question_to_user']}")
+    response = input("👤 답변: ")
 
     return {"request": response, "messages": [HumanMessage(content=response)]}
 
 def is_complete(state: AgentState):
     return state["is_complete"]
 
-def main():
+def main(first_request: str):
+   
     load_dotenv()
 
     # 그래프 생성
@@ -147,11 +180,30 @@ def main():
     workflow.add_edge("ask_to_user", "user_response")
     workflow.add_edge("user_response", "request_analysis")
 
+    app = workflow.compile()
 
+    initial_state = {
+        "request": first_request,
+        "functional_requirements": "",
+        "non_functional_requirements": "",
+        "is_complete": False,
+        "question_to_user": None,
+        "messages": [HumanMessage(content=first_request)]
+    }
+    
+    final_state = app.invoke(initial_state)
 
-
-
-
+    print("\n" + "="*60)
+    print("✅ 요구사항 분석 완료!")
+    print("="*60)
+    print(f"\n📋 목표: {final_state['request']}")
+    print(f"\n📌 기능적 요구사항:\n{final_state['functional_requirements']}")
+    print(f"\n⚙️ 비기능적 요구사항:\n{final_state['non_functional_requirements']}")
+    
+    return final_state
+    
 
 if __name__ == "__main__":
-    main()
+    print("💡 요구사항을 입력해주세요:")
+    first_request = input("👉 ")
+    main(first_request)
