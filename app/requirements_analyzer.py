@@ -18,19 +18,19 @@ class AnalysisResult(BaseModel):
     goal: str = Field(description="분석된 고객의 요청사항에 대한 목표")
     functional_requirements: str = Field(description="기능적 요구사항")
     non_functional_requirements: str = Field(description="비 기능적 요구사항")
-    is_complete: bool = Field(description="요구사항 분석을 완료하기에 정보가 충분하면 true(확정), 부족하면 false(추가 정보 요청)")
-    question_to_user: Optional[str] = Field(description="정보가 부족할 경우, 사용자에게 물어볼 질문")
+    feedback: Optional[str] = Field(description="피드백")
 
-class UserQuestion(BaseModel):
-    question_to_user: str = Field(description="사용자에게 물어볼 질문")
-    is_complete: bool = Field(description="요구사항 분석을 완료하기에 정보가 충분하면 true, 부족하면 false")
 
+class FeedbackAnalysisResult(BaseModel):
+    feedback: str = Field(description="작성된 요구사항에 대한 평가")
+    is_complete: bool = Field(description="작성된 요구사항이 사용자의 요청사항을 충분히 반영했는지 평가하라. 충분히 반영했다면 true, 아니면 false")
+    
 class AgentState(TypedDict):
     request: str
     functional_requirements: str
     non_functional_requirements: str
     is_complete: bool
-    question_to_user: Optional[str]
+    feedback: Optional[str]
     messages: Annotated[list, operator.add]
 
 def request_analysis(state: AgentState):
@@ -43,24 +43,22 @@ def request_analysis(state: AgentState):
     system_prompt = """
     당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 아래 규칙에 따라 대화를 분석하고 요구사항을 명확하고 실행 가능하게 정리하라.
     한번 확정된 요구사항은 다시 수정하지 않고 구현하기 때문에 추후에 기능이 추가되지 않도록 최대한 정확하고 세세하게 작성해야한다.
-    먼저 임의로 필요한 모든 기능에 대해 요구사항을 작성하고, 사용자의 응답을 받아 요구사항을 수정한다.
-    
+    모든 기능은 확정되어야 한다.
+
     [목표]
     - 고객의 추상적 요구를 구체적이고 검증 가능한 요구사항으로 정제한다.
     - 기능적/비기능적 요구를 명확히 분리하고, 모호성을 제거한다.
-    - 정보가 부족하면 핵심 공백을 식별하고 추가 질문을 통해 보완한다.
+    - 정말 필요한 정보에 대해서만 추가 질문을 통해 보완한다.
 
     [작성 규칙]
     - 기능/비기능 요구는 번호 목록 형태로 작성하되, 각 항목은 측정 가능하거나 검증 가능한 수치/조건을 포함한다. 예: "응답 시간 p95 ≤ 300ms", "동시 접속 5,000 사용자 지원".
     - 모호한 표현(빠르게, 크게, 안정적 등)은 금지하고, 구체적 수치/조건/사례로 대체한다.
     - 범위(Scope), 가정(Assumptions), 제약(Constraints)이 암시되어 있으면 명시적으로 드러내고 해당 항목에 통합한다.
-    - 리스크와 불확실성이 보이면 해당 항목을 질문으로 전환하여 고객 확인이 필요함을 표시한다.
+    - 사용자의 요청이 없을 경우에는 가장 일반적인 방법을 우선 채택하여 작성하며, 리스크를 최소화한다.
     - 보안/개인정보, 로깅/모니터링, 배포/롤백, 국제화/현지화, 접근성 등 일반적으로 누락되기 쉬운 비기능 항목을 습관적으로 점검한다.
     - 대화 이력의 핵심 요구와 비핵심 잡음을 구분하여, 핵심만 반영한다.
-
-    [대화 활용 방법]
-    - 먼저 대화(conversation_history)의 목적/배경/제약을 1-2문장으로 함축 요약한 뒤, 요구사항을 정리한다.
-    - 불충분한 부분이 있으면 question_to_user에 최소 3개 이상 구체적이고 답하기 쉬운 질문을 제시한다. 단, 정보가 충분하면 질문 개수를 줄일 수 있다.
+    - 피드백이 있다면 이를 반영하여 요구사항을 수정하라.
+    - 기능에 대한 요구사항은 최대한 자세하게 작성하고, 비기능적 요구사항은 최대한 간결하게 작성한다.
 
     [산출물 기준]
     - 모든 출력은 한국어로 작성한다.
@@ -70,18 +68,14 @@ def request_analysis(state: AgentState):
     현재 계획된 기능: {functional_requirements}
     현재 계획된 비기능적 요구: {non_functional_requirements}
 
+    피드백: {feedback}
 
     {format_instructions}
     """
 
-    user_request = """
-    요청된 요구사항: {question_to_user}
-    그에 따른 사용자 응답: {request}
-    """
-
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", user_request)
+        ("human", "사용자 응답: {request}")
     ])
 
     chain = prompt | llm | parser
@@ -89,7 +83,8 @@ def request_analysis(state: AgentState):
     result = chain.invoke({
         "format_instructions": parser.get_format_instructions(),
         "request": state["request"],    
-        "question_to_user": state["question_to_user"],
+        
+        "feedback": None, 
         "functional_requirements": state.get("functional_requirements", "아직 정의되지 않음"),
         "non_functional_requirements": state.get("non_functional_requirements", "아직 정의되지 않음"),
     })
@@ -99,33 +94,33 @@ def request_analysis(state: AgentState):
         "functional_requirements": result["functional_requirements"], 
         "non_functional_requirements": result["non_functional_requirements"], 
         "is_complete": result["is_complete"], 
-        "question_to_user": result["question_to_user"]
     }
 
-def ask_to_user(state: AgentState):
-    """사용자에게 추가 정보를 요청하는 노드"""
+def feedback_analysis(state: AgentState):
+    """작성된 요구사항에 대해 평가하는 노드"""
 
-    print("--- 📝 사용자에게 추가 정보를 요청 중... ---")
-    parser = JsonOutputParser(pydantic_object=UserQuestion)
+    print("--- 📝 작성된 요구사항에 대해 평가 중... ---")
+    parser = JsonOutputParser(pydantic_object=FeedbackAnalysisResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
    
-
     system_prompt = """
-    당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 개발팀이 요청한 정보와 대화 이력을 바탕으로, 사용자에게 추가로 확인해야 할 질문을 생성한다.
+    당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 사용자의 요청사항에 대해 작성된 요구사항을 평가하라.
+
+    [평가 규칙]
+    - 작성된 요구사항이 사용자의 요청사항을 충분히 반영했는지 평가하라.
+    - 충분히 반영했다면 is_complete를 true로 설정한다.
+    - 충분히 반영하지 못했다면 is_complete를 false로 설정하고 feedback에 평가를 작성한다.
     
-    
-    [지침]
-    - 대화 이력(conversation_history)의 맥락을 반영하되, 이미 물어본 질문은 반복하지 않는다.
-    - 질문은 구체적이고 답하기 쉽게 작성하며, 선택지나 예시를 덧붙여 응답 품질을 높인다.
-    - 한 번에 너무 많은 질문을 주지 말고 최대 3-5개로 우선순위를 반영한다.
-    - 각 질문은 단일 이슈만 다루도록 분리한다.
+    - 또한 사용자가 요구사항을 추후에 수정할 수 있으므로 이를 감안하여 평가하라.
 
     [산출물 기준]
     - 모든 출력은 한국어로 작성한다.
-    - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄격히 따른다. 필드 이름을 임의로 변경하지 않는다.
-      - question_to_user: 사용자에게 보낼 질문(번호 목록). 중복/모호 금지.
+    - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄겹히 따른다. 필드 이름을 임의로 변경하지 않는다.
+      - feedback: 작성된 요구사항에 대한 평가.
       - is_complete: 정보가 충분해 구현 계획 수립이 가능하면 true, 아니면 false.
 
+    작성된 요구사항: {functional_requirements}
+    작성된 비기능적 요구사항: {non_functional_requirements}
   
     {format_instructions}
     """
@@ -135,18 +130,19 @@ def ask_to_user(state: AgentState):
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
         MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "추가 정보가 필요합니다. 사용자에게 질문을 생성해주세요."),
+        ("human", "작성된 요구사항에 대해 평가하라."),
     ])
 
     chain = prompt | llm | parser
     result = chain.invoke({
         "format_instructions": parser.get_format_instructions(),
-        "chat_history": chat_history
+        "chat_history": chat_history,
+        "functional_requirements": state["functional_requirements"],
+        "non_functional_requirements": state["non_functional_requirements"],
     })
 
     return {
-        "messages": [AIMessage(content=result["question_to_user"])], 
-        "question_to_user": result["question_to_user"], 
+        "feedback": result["feedback"], 
         "is_complete": result["is_complete"]
     }
     
@@ -155,7 +151,9 @@ def user_response(state: AgentState):
     """사용자의 응답을 받는 노드"""
 
     print("--- 📝 사용자의 응답을 받는 중... ---")
-    print(f"\n❓ {state['question_to_user']}")
+    print(f"\n 작성된 기능적 요구사항: {state['functional_requirements']}")
+    print(f"\n 작성된 비기능적 요구사항: {state['non_functional_requirements']}")
+    print(f"\n ")
     response = input("👤 답변: ")
 
     return {"request": response, "messages": [HumanMessage(content=response)]}
@@ -164,21 +162,16 @@ def is_complete(state: AgentState):
     return state["is_complete"]
 
 def main(first_request: str):
-   
     load_dotenv()
 
-    # 그래프 생성
     workflow = StateGraph(AgentState)
 
-    # 노드 추가
     workflow.add_node("request_analysis", request_analysis)
-    workflow.add_node("ask_to_user", ask_to_user)
-    workflow.add_node("user_response", user_response)
+    workflow.add_node("feedback_analysis", feedback_analysis)
 
     workflow.add_edge(START, "request_analysis") 
-    workflow.add_conditional_edges("request_analysis", is_complete,{True: END, False: "ask_to_user"})    
-    workflow.add_edge("ask_to_user", "user_response")
-    workflow.add_edge("user_response", "request_analysis")
+    workflow.add_edge("request_analysis", "feedback_analysis")
+    workflow.add_conditional_edges("feedback_analysis", is_complete,{True: END, False: "request_analysis"})    
 
     app = workflow.compile()
 
@@ -187,7 +180,7 @@ def main(first_request: str):
         "functional_requirements": "",
         "non_functional_requirements": "",
         "is_complete": False,
-        "question_to_user": None,
+        "feedback": None,
         "messages": [HumanMessage(content=first_request)]
     }
     
