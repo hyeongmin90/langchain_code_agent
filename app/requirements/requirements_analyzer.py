@@ -37,7 +37,6 @@ class AgentState(TypedDict):
 def generate_clarifying_questions(state: AgentState):
     """사용자의 요청사항에 대해 추가 질문을 생성하는 노드"""
     print("--- 📝 추가 질문 생성 중... ---")
-    parser = JsonOutputParser(pydantic_object=ClarifyingQuestionsResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     system_prompt = """
     당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 명세서 작성에 앞서 반드시 확인해야 할 핵심 질문 3가지를 생성하세요. 
@@ -59,21 +58,19 @@ def generate_clarifying_questions(state: AgentState):
         ("system", system_prompt),
         ("human", "사용자 응답: {request}")
     ])
-    chain = prompt | llm | parser
+    chain = prompt | llm.with_structured_output(ClarifyingQuestionsResult)
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "request": state["request"]
     })
 
     return {
-        "clarifying_questions": result["clarifying_questions"]
+        "clarifying_questions": result.clarifying_questions
     }
 
 def user_response(state: AgentState):
     """사용자의 응답을 받는 노드"""
     print("--- 📝 사용자의 응답을 받는 중... ---")
-
-    parser = JsonOutputParser(pydantic_object=UserResponseResult)
+    
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     system_prompt = """
     당신은 사용자의 프로젝트 아이디어를 현실로 만들어주는 친절하고 유능한 AI 프로젝트 어시스턴트입니다. 
@@ -98,28 +95,24 @@ def user_response(state: AgentState):
     - 모든 출력은 한국어로 작성한다.
     - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄격히 따른다. 필드 이름을 임의로 변경하지 않는다.
       - request: 사용자에게 보여줄 메시지 텍스트.
-
-    {format_instructions}
     """
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
         ("human", "사용자 응답: {request}"),
     ])
-    chain = prompt | llm | parser
+    chain = prompt | llm.with_structured_output(UserResponseResult)
 
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "request": state["request"],
         "clarifying_questions": state["clarifying_questions"]
     })
 
-    return {"request": result["request"], "messages": state["messages"]}
+    return {"request": result.request, "messages": state["messages"]}
 
 def request_analysis(state: AgentState):
     """사용자의 요청사항을 분석하고, 추가 정보가 필요한지 판단하는 노드"""
     print("--- 📝 요구사항 분석 중... ---")
 
-    parser = JsonOutputParser(pydantic_object=AnalysisResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     system_prompt = """
     당신은 시니어 요구사항 분석가이자 소프트웨어 아키텍트다. 아래 규칙에 따라 대화를 분석하고 요구사항을 명확하고 실행 가능하게 정리하라.
@@ -149,8 +142,6 @@ def request_analysis(state: AgentState):
     현재 계획된 기능: {functional_requirements}
 
     피드백: {feedback}
-
-    {format_instructions}
     """
 
     prompt = ChatPromptTemplate([
@@ -158,10 +149,9 @@ def request_analysis(state: AgentState):
         ("human", "사용자 응답: {request}")
     ])
 
-    chain = prompt | llm | parser
+    chain = prompt | llm.with_structured_output(AnalysisResult)
 
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "request": state["request"],    
         "feedback": state.get("feedback", ""), 
         "functional_requirements": state.get("functional_requirements", "아직 정의되지 않음"),
@@ -169,16 +159,15 @@ def request_analysis(state: AgentState):
     })
 
     return {
-        "goal": result["goal"],
-        "functional_requirements": result["functional_requirements"], 
-        "non_functional_requirements": result["non_functional_requirements"]
+        "goal": result.goal,
+        "functional_requirements": result.functional_requirements, 
+        "non_functional_requirements": result.non_functional_requirements
     }
 
 def feedback_analysis(state: AgentState):
     """작성된 요구사항에 대해 평가하는 노드"""
 
     print("--- 📝 작성된 요구사항에 대해 평가 중... ---")
-    parser = JsonOutputParser(pydantic_object=FeedbackAnalysisResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
    
     system_prompt = """
@@ -200,7 +189,6 @@ def feedback_analysis(state: AgentState):
     작성된 요구사항: {functional_requirements}
     작성된 비기능적 요구사항: {non_functional_requirements}
   
-    {format_instructions}
     """
 
     chat_history = state["messages"]
@@ -211,17 +199,16 @@ def feedback_analysis(state: AgentState):
         ("human", "작성된 요구사항에 대해 평가하라."),
     ])
 
-    chain = prompt | llm | parser
+    chain = prompt | llm.with_structured_output(FeedbackAnalysisResult)
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "chat_history": chat_history,
         "functional_requirements": state["functional_requirements"],
         "non_functional_requirements": state["non_functional_requirements"],
     })
 
     return {
-        "feedback": result["feedback"], 
-        "is_complete": result["is_complete"]
+        "feedback": result.feedback, 
+        "is_complete": result.is_complete
     }
     
 

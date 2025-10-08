@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
+from langchain_core.output_parsers import JsonOutputParser
 
 class ClarifyingQuestionsResult(BaseModel):
     clarifying_questions: List[str] = Field(description="추가 질문 목록")
@@ -40,37 +40,31 @@ def generate_clarifying_questions(state: AgentState):
     - 추가 질문은 사용자의 요청사항에 대해 추가 정보가 필요한지 판단하는 질문이다.
     - 추가 질문은 최대 4가지까지 생성하라.
     - 추가 질문은 모호하지 않고 명확하게 작성하라.
-
-    [산출물 기준]
-    - 모든 출력은 한국어로 작성한다.
-    - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄겹히 따른다. 필드 이름을 임의로 변경하지 않는다.
-      - clarifying_questions: 추가 질문 목록.
-
-    {format_instructions}
     """
 
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
         ("human", "사용자 응답: {request}")
     ])
-    chain = prompt | llm | parser
+    
+    chain = prompt | llm.with_structured_output(ClarifyingQuestionsResult)
+    
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "request": state["request"]
     })
+    
     print("--------------------------------")
-    print(result["clarifying_questions"])
+    print(result.clarifying_questions)
     print("--------------------------------")
 
     return {
-        "clarifying_questions": result["clarifying_questions"]
+        "clarifying_questions": result.clarifying_questions
     }
 
 def generate_user_request(state: AgentState):
     """사용자의 요청을 생성하는 노드"""
     print("--- 📝 사용자의 요청을 생성하는 중... ---")
 
-    parser = JsonOutputParser(pydantic_object=UserResponseResult)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     system_prompt = """
     당신은 사용자의 프로젝트 아이디어를 현실로 만들어주는 친절하고 유능한 AI 프로젝트 어시스턴트입니다. 
@@ -91,17 +85,12 @@ def generate_user_request(state: AgentState):
     - 메시지 마지막에는 사용자의 답변을 기다린다는 뉘앙스를 풍겨 대화를 유도하십시오.
     - 사용자의 응답이 부족하면 is_complete를 false로 설정하고 ask_question을 추가 질문으로 설정하십시오.
     - 사용자의 응답이 충분하면 is_complete를 true로 설정하고 result에 사용자의 응답 결과를 정리한 텍스트를 작성하십시오.
+    - result는 사용자의 응답 결과를 정리한 텍스트다, 여기엔 사용자의 답변을 정리한 것 외의 너의 생각이나 대화 이력등의 기타 정보는 포함하지 않는다.
     - 핵심 질문의 내용을 반드시 사용하되 질문의 핵심 내용을 지키면서 자연스럽게 소개하십시오, 질문의 핵심이 바뀌지 않는한 수정해도 된다.
     
     [산출물 기준]
     - 모든 출력은 한국어로 작성한다.
-    - 출력 형식은 반드시 제공된 JSON 스키마 지침을 엄격히 따른다. 필드 이름을 임의로 변경하지 않는다.
-      - ask_question: 사용자에게 보여줄 메시지 텍스트.
-      - is_complete: 사용자의 응답이 충분한지 판단하라. 충분하면 true, 아니면 false.
-      - result: 질문에 대한 사용자 응답 결과를 정리한 텍스트.
-
-    !!!출력 형식이 다르면 에러가 발생할 수 있으므로 반드시 다음의 JSON 스키마 지침을 엄격히 따라야 한다.!!!
-    {format_instructions}
+    - Pydantic 모델의 필드 이름을 임의로 변경하지 않는다.
     """
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
@@ -109,24 +98,25 @@ def generate_user_request(state: AgentState):
         ("human", "핵심 질문 목록: {clarifying_questions}")
     ])
 
-    chain = prompt | llm | parser
+    chain = prompt | llm.with_structured_output(UserResponseResult)
+
+    print("--------------------------------")
+    print([i.content + "\n" for i in state["messages"]])
+    print("--------------------------------")
 
     result = chain.invoke({
-        "format_instructions": parser.get_format_instructions(),
         "clarifying_questions": state["clarifying_questions"],
         "messages": state["messages"]
     })
 
-    updated_messages = state["messages"] + [AIMessage(content=result["ask_question"])]
-    return {"ask_question": result["ask_question"], "result": result.get("result", ""), "is_complete": result.get("is_complete", False), "messages": updated_messages}
+    return {"ask_question": result.ask_question, "result": result.result or "", "is_complete": result.is_complete or False, "messages": [AIMessage(content=result.ask_question)]}
 
 def user_response(state: AgentState):
     """사용자의 응답을 받는 노드"""
     print("--- 📝 사용자의 응답을 받는 중... ---")
     print(state.get("ask_question", "질문이 준비되지 않았습니다. 요구사항을 설명해 주세요."))
     response = input("답변: ")
-    updated_messages = state["messages"] + [HumanMessage(content=response)]
-    return {"messages": updated_messages, "request": response}
+    return {"messages": [HumanMessage(content=response)], "request": response}  
 
 def is_complete(state: AgentState):
     return state["is_complete"] == True
