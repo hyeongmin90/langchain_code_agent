@@ -9,40 +9,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
+from schemas import DecomposeAgentState, UserStoriesResult, FinalUserStoriesResult
 
-
-class AgentState(TypedDict):
-    user_request: str
-    raw_user_stories: Optional[user_stories_result]
-    refined_user_stories: Optional[user_stories_result]
-    final_specifications: Optional[final_user_stories_result]
-
-class epic(BaseModel):
-    title: str = Field(description="프로젝트 전체의 최상위 목표 제목")
-    goal: str = Field(description="프로젝트를 통해 달성하고자 하는 상세 비즈니스 목표")
-
-class user_stories_draft(BaseModel):
-    id: str = Field(description="사용자 스토리 초안 고유 식별자")
-    as_a: str = Field(description="스토리의 주체가 되는 사용자 역할")
-    i_want_to: str = Field(description="사용자가 달성하고자 하는 목표나 행동")
-    so_that: str = Field(description="그 목표를 통해 얻게 되는 가치나 이유")
-
-class user_stories_result(BaseModel):
-    epic: epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
-    user_stories_draft: List[user_stories_draft] = Field(description="브레인스토밍을 통해 도출된 사용자 스토리 초안 목록")
-
-class acceptance_criteria(BaseModel):
-    scenario: str = Field(description="시나리오 제목")
-    given: str = Field(description="시나리오가 시작되기 전의 전제 조건")
-    when: str = Field(description="사용자가 취하는 특정 행동")
-    then: str = Field(description="그 행동으로 인해 발생해야 하는 기대 결과")
-
-class final_user_stories_result(BaseModel):
-    epic: epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
-    refined_user_stories: List[user_stories_draft] = Field(description="정제된 사용자 스토리 목록")
-    acceptance_criteria: List[acceptance_criteria] = Field(description="각 사용자 스토리에 대한 수용 기준")
-
-def decompose_into_user_stories(state: AgentState):
+def decompose_into_user_stories(state: DecomposeAgentState):
     print("--- 📝 1단계 결과물 생성 중... ---")
 
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
@@ -70,7 +39,7 @@ def decompose_into_user_stories(state: AgentState):
         ("human", "사용자 응답: {user_request}")
     ])
     
-    chain = prompt | llm.with_structured_output(user_stories_result)
+    chain = prompt | llm.with_structured_output(UserStoriesResult)
     
     result = chain.invoke({
         "user_request": state["user_request"]
@@ -85,7 +54,7 @@ def decompose_into_user_stories(state: AgentState):
 
 
 
-def refine_user_stories(state: AgentState):
+def refine_user_stories(state: DecomposeAgentState):
     print("--- 📝 2단계 결과물 생성 중... ---")
 
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
@@ -112,11 +81,11 @@ def refine_user_stories(state: AgentState):
     """
 
     prompt = ChatPromptTemplate([
-        ("system", system_prompt)
+        ("system", system_prompt),
         ("human", "사용자의 최초 요청 사항: {user_request}\n사용자 스토리 초안 목록:\n {user_stories_draft}")
     ])
     
-    chain = prompt | llm.with_structured_output(user_stories_result)
+    chain = prompt | llm.with_structured_output(UserStoriesResult)
     
     result = chain.invoke({
         "user_request": state["user_request"],
@@ -131,7 +100,7 @@ def refine_user_stories(state: AgentState):
         "refined_user_stories": result
     }
 
-def generate_final_specifications(state: AgentState):
+def generate_final_specifications(state: DecomposeAgentState):
     print("--- 📝 3단계 결과물 생성 중... ---")
 
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
@@ -158,11 +127,11 @@ def generate_final_specifications(state: AgentState):
     """
 
     prompt = ChatPromptTemplate([
-        ("system", system_prompt)
+        ("system", system_prompt),  
         ("human", "사용자의 최초 요청 사항:\n {user_request}\n정제된 사용자 스토리:\n {refined_user_stories}")
     ])
     
-    chain = prompt | llm.with_structured_output(final_user_stories_result)
+    chain = prompt | llm.with_structured_output(FinalUserStoriesResult)
     
     result = chain.invoke({
         "user_request": state["user_request"],
@@ -181,7 +150,7 @@ def generate_final_specifications(state: AgentState):
 def main(user_request: str):
     load_dotenv()
 
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(DecomposeAgentState)
 
     workflow.add_node("decompose_into_user_stories", decompose_into_user_stories)
     workflow.add_node("refine_user_stories", refine_user_stories)
