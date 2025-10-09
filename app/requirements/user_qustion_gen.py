@@ -52,9 +52,9 @@ def generate_clarifying_questions(state: AgentState):
     result = chain.invoke({
         "request": state["request"]
     })
-    
-    print("--------------------------------")
-    print(result.clarifying_questions)
+
+    print("추가 질문 -----------------")
+    print(result)
     print("--------------------------------")
 
     return {
@@ -102,6 +102,10 @@ def generate_user_request(state: AgentState):
         "clarifying_questions": state["clarifying_questions"],
         "messages": state["messages"]
     })
+
+    print("사용자의 응답에 대한 결과 -----------------")
+    print(result)
+    print("--------------------------------")
 
     return {"ask_question": result.ask_question, "result": result.result or "", "is_complete": result.is_complete or False, "messages": [AIMessage(content=result.ask_question)]}
 
