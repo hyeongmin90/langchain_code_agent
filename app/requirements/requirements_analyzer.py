@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
-from schemas import FinalUserStoriesResult, AnalysisResult, FeedbackAnalysisResult, AnalysisAgentState, FullySpecifiedUserStory
+from schemas import FinalUserStoriesResult, AnalysisResult, FeedbackAnalysisResult, AnalysisAgentState, ProfessionalSpecificationDocument
 
 
 
@@ -77,7 +77,7 @@ def request_analysis(state: AnalysisAgentState):
         ("human", human_prompt)
     ])
 
-    chain = prompt | llm.with_structured_output(FullySpecifiedUserStory)
+    chain = prompt | llm.with_structured_output(ProfessionalSpecificationDocument)
 
     result = chain.invoke({
         "feedback": state.get("feedback", ""),
@@ -114,10 +114,7 @@ def feedback_analysis(state: AnalysisAgentState):
     아래 [작성된 기능 명세서]가 [유저스토리]를 충분히 반영했는지 평가하라.
 
     [작성된 기능 명세서]
-    {functional_requirements}
-
-    [유저스토리]
-    {user_stories}
+    {final_specifications}
     """
 
     prompt = ChatPromptTemplate([
@@ -127,8 +124,7 @@ def feedback_analysis(state: AnalysisAgentState):
 
     chain = prompt | llm.with_structured_output(FeedbackAnalysisResult)
     result = chain.invoke({
-        "functional_requirements": state["functional_requirements"],
-        "user_stories": state["user_stories"]
+        "final_specifications": state["final_specifications"]
     })
 
     return {
@@ -155,8 +151,7 @@ def main(user_stories: FinalUserStoriesResult):
     app = workflow.compile()
 
     initial_state = {
-        "user_stories": user_stories,
-        "functional_requirements": "",
+        "final_specifications": final_specifications,
         "is_complete": False,
         "feedback": None,
     }

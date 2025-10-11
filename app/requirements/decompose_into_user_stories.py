@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
-from schemas import DecomposeAgentState, UserStoriesResult, FinalUserStoriesResult
+from schemas import DecomposeAgentState, UserStoriesResult, RefinedUserStoriesResult, FinalUserStoriesResult
 
 def decompose_into_user_stories(state: DecomposeAgentState):
     print("--- 📝 1단계 결과물 생성 중... ---")
