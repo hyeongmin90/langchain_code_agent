@@ -75,7 +75,6 @@ def refine_user_stories(state: DecomposeAgentState):
 
     [출력 형식]
     - 반드시 유효한 pydantic 모델의 형식으로 출력하라.
-    - epic 정보는 그대로 유지하고, user_stories_draft 키를 refined_user_stories로 변경하라.
     - 각 사용자 스토리 객체에는 priority 필드가 반드시 포함되어야 한다.
     - ID는 STORY-001, STORY-002 와 같이 순차적으로 다시 부여하라.
     """
@@ -85,7 +84,7 @@ def refine_user_stories(state: DecomposeAgentState):
         ("human", "사용자의 최초 요청 사항: {user_request}\n사용자 스토리 초안 목록:\n {user_stories_draft}")
     ])
     
-    chain = prompt | llm.with_structured_output(UserStoriesResult)
+    chain = prompt | llm.with_structured_output(RefinedUserStoriesResult)
     
     result = chain.invoke({
         "user_request": state["user_request"],

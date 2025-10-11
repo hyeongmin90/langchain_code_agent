@@ -15,6 +15,17 @@ class UserStoriesResult(BaseModel):
     epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
     user_stories_draft: List[UserStoriesDraft] = Field(description="브레인스토밍을 통해 도출된 사용자 스토리 초안 목록")
 
+class RefinedUserStoriesDraft(BaseModel):
+    id: str = Field(description="사용자 스토리 고유 식별자")
+    as_a: str = Field(description="스토리의 주체가 되는 사용자 역할")
+    i_want_to: str = Field(description="사용자가 달성하고자 하는 목표나 행동")
+    so_that: str = Field(description="그 목표를 통해 얻게 되는 가치나 목적")
+    priority: str = Field(description="스토리의 중요도 (High, Medium, Low)")
+
+class RefinedUserStoriesResult(BaseModel):
+    epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
+    refined_user_stories: List[RefinedUserStoriesDraft] = Field(description="정제된 사용자 스토리 목록")
+
 class AcceptanceCriteria(BaseModel):
     scenario: str = Field(description="시나리오 제목")
     given: str = Field(description="시나리오가 시작되기 전의 전제 조건")
