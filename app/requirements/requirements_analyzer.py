@@ -85,7 +85,7 @@ def request_analysis(state: AnalysisAgentState):
     })
 
     return {
-        "functional_requirements": result.functional_requirements, 
+        "final_specifications": result, 
     }
 
 def feedback_analysis(state: AnalysisAgentState):
@@ -136,7 +136,7 @@ def feedback_analysis(state: AnalysisAgentState):
 def is_complete(state: AnalysisAgentState):
     return state["is_complete"]
 
-def main(user_stories: FinalUserStoriesResult):
+def main(user_stories : FinalUserStoriesResult):
     load_dotenv()
 
     workflow = StateGraph(AnalysisAgentState)
@@ -151,7 +151,8 @@ def main(user_stories: FinalUserStoriesResult):
     app = workflow.compile()
 
     initial_state = {
-        "final_specifications": final_specifications,
+        "user_stories": user_stories,
+        "final_specifications": None,
         "is_complete": False,
         "feedback": None,
     }

@@ -86,6 +86,7 @@ class DecomposeAgentState(TypedDict):
     final_specifications: Optional[FinalUserStoriesResult]
 
 class AnalysisAgentState(TypedDict):
+    user_stories: FinalUserStoriesResult
     final_specifications: ProfessionalSpecificationDocument
     is_complete: bool
     feedback: Optional[str]

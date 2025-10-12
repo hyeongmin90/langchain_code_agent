@@ -16,12 +16,16 @@ import decompose_into_user_stories
 
 def main():
     load_dotenv()
+    
     first_request = input("👉 ")
+
+    
     user_question_result = user_qustion_gen.main(first_request)
-    user_stories = decompose_into_user_stories.main(user_question_result)
-    requirements_analysis_result = requirements_analyzer.main(user_stories)
+    # user_stories = decompose_into_user_stories.main(user_question_result)
+    # requirements_analysis_result = requirements_analyzer.main(user_stories)
     print("최종 결과물-----------------------")
-    print(requirements_analysis_result["functional_requirements"])
+    print(user_question_result)
+    # print(requirements_analysis_result["final_specifications"])
     print("--------------------------------")
 
 if __name__ == "__main__":
