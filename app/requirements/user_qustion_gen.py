@@ -142,7 +142,20 @@ def final_result_generation(state: AgentState):
 def is_complete(state: AgentState):
     return state["is_complete"] == True
 
-def main(first_request: str, interaction_mode: str):
+def main():
+
+    print("안녕하세요! 어떤 프로젝트를 만들고 싶으신가요? 자세히 알려주실수록 좋습니다.")
+    first_request = input("요구사항: ")
+    
+    mode = ""
+    while mode not in ["1", "2"]:
+        print("\n어떤 모드로 진행할까요?")
+        print("1. 빠른 모드 (핵심 질문 위주로 빠르게 진행)")
+        print("2. 상세 모드 (기술 스택, 제약 조건 등 상세하게 진행)")
+        mode = input("선택 (1 또는 2): ")
+
+    interaction_mode = "빠른" if mode == "1" else "상세"
+
     load_dotenv()
 
     workflow = StateGraph(AgentState)
@@ -173,16 +186,4 @@ def main(first_request: str, interaction_mode: str):
     return final_state["result"]
 
 if __name__ == "__main__":
-    print("안녕하세요! 어떤 프로젝트를 만들고 싶으신가요? 자세히 알려주실수록 좋습니다.")
-    first_request = input("요구사항: ")
-    
-    mode = ""
-    while mode not in ["1", "2"]:
-        print("\n어떤 모드로 진행할까요?")
-        print("1. 빠른 모드 (핵심 질문 위주로 빠르게 진행)")
-        print("2. 상세 모드 (기술 스택, 제약 조건 등 상세하게 진행)")
-        mode = input("선택 (1 또는 2): ")
-
-    interaction_mode = "빠른" if mode == "1" else "상세"
-    
-    print(main(first_request, interaction_mode))
+    print(main())        
