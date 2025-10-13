@@ -1,6 +1,7 @@
 from typing import TypedDict, List, Optional
 from pydantic import BaseModel, Field
 
+#decompose_into_user_stories
 class Epic(BaseModel):
     title: str = Field(description="프로젝트 전체의 최상위 목표 제목")
     goal: str = Field(description="프로젝트를 통해 달성하고자 하는 상세 비즈니스 목표")
@@ -15,6 +16,7 @@ class UserStoriesResult(BaseModel):
     epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
     user_stories_draft: List[UserStoriesDraft] = Field(description="브레인스토밍을 통해 도출된 사용자 스토리 초안 목록")
 
+
 class RefinedUserStoriesDraft(BaseModel):
     id: str = Field(description="사용자 스토리 고유 식별자")
     as_a: str = Field(description="스토리의 주체가 되는 사용자 역할")
@@ -24,7 +26,8 @@ class RefinedUserStoriesDraft(BaseModel):
 
 class RefinedUserStoriesResult(BaseModel):
     epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
-    refined_user_stories: List[RefinedUserStoriesDraft] = Field(description="정제된 사용자 스토리 목록")
+    refined_user_stories: List[List[RefinedUserStoriesDraft]] = Field(description="그룹화된 정제된 사용자 스토리 목록")
+
 
 class AcceptanceCriteria(BaseModel):
     scenario: str = Field(description="시나리오 제목")
@@ -37,17 +40,19 @@ class FinalUserStoriesDraft(BaseModel):
     as_a: str = Field(description="스토리의 주체가 되는 사용자 역할")
     i_want_to: str = Field(description="사용자가 달성하고자 하는 목표나 행동")
     so_that: str = Field(description="그 목표를 통해 얻게 되는 가치나 목적")
+    priority: str = Field(description="스토리의 중요도 (High, Medium, Low)")
     acceptance_criteria: List[AcceptanceCriteria] = Field(description="각 사용자 스토리에 대한 수용 기준")
 
 class FinalUserStoriesResult(BaseModel):
-    epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
-    final_user_stories: List[FinalUserStoriesDraft] = Field(description="정제된 사용자 스토리 목록")
+    final_user_stories: List[FinalUserStoriesDraft] = Field(description="그룹화된 최종 사용자 스토리 목록")
 
+#requirements_analysis
 class FullySpecifiedUserStory(BaseModel):
     id: str = Field(description="사용자 스토리의 고유 식별자")
     as_a: str = Field(description="스토리의 주체가 되는 사용자 역할")
     i_want_to: str = Field(description="사용자가 원하는 행동이나 기능")
     so_that: str = Field(description="그 행동을 통해 얻는 가치나 목적")
+    priority: str = Field(description="스토리의 중요도 (High, Medium, Low)")
     
     detailed_specification: str = Field(
         description="이 스토리를 구현하기 위한 상세 기능 요구사항. 마크다운 형식의 문자열."
@@ -81,12 +86,13 @@ class FeedbackAnalysisResult(BaseModel):
 # Agent States
 class DecomposeAgentState(TypedDict):
     user_request: str
+    epic: Epic
     raw_user_stories: Optional[UserStoriesResult]
-    refined_user_stories: Optional[UserStoriesResult]
-    final_specifications: Optional[FinalUserStoriesResult]
+    refined_user_stories: Optional[List[List[RefinedUserStoriesDraft]]]
+    final_specifications: Optional[List[List[FinalUserStoriesResult]]]
 
 class AnalysisAgentState(TypedDict):
-    user_stories: FinalUserStoriesResult
+    user_stories: List[List[FinalUserStoriesDraft]]
     final_specifications: ProfessionalSpecificationDocument
     is_complete: bool
     feedback: Optional[str]
