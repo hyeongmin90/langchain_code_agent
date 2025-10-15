@@ -70,6 +70,29 @@ class FeedbackAnalysisResult(BaseModel):
     feedback: str = Field(description="작성된 요구사항에 대한 평가")
     is_complete: bool = Field(description="작성된 요구사항이 사용자의 요청사항을 충분히 반영했는지 평가하라. 충분히 반영했다면 true, 아니면 false")
 
+class Dependency(BaseModel):
+    to: str = Field(description="의존성 대상")
+    dependency_type: str = Field(description="의존성 타입")
+    reason: str = Field(description="의존성 설명")
+
+class GroupedEpic(BaseModel):
+    group_epic: str = Field(description="그룹화된 유저 스토리의 최상위 목표")
+    group_description: str = Field(description="그룹화된 유저 스토리의 기능 설명")
+    group_user_stories_id: List[str] = Field(description="그룹화된 유저 스토리 고유 식별자 목록")
+    key_entities: List[str] = Field(description="그룹화된 유저 스토리의 핵심 명사(엔티티) 목록")
+    actors: List[str] = Field(description="그룹화된 유저 스토리의 주체가 되는 사용자 역할 목록")
+    group_dependencies: List[Dependency] = Field(description="그룹화된 유저 스토리의 의존성")
+    
+class CrossCuttingConcern(BaseModel):
+    name: str = Field(description="횡단 관심사 이름")
+    description: str = Field(description="구체적인 구현 방식")
+    affected_epics: List[str] = Field(description="영향받는 에픽 (전체 또는 특정)")
+
+class ArchitectureResult(BaseModel):
+    epic: Epic = Field(description="프로젝트의 최상위 목표를 정의하는 에픽")
+    refined_user_stories_grouped: List[GroupedEpic] = Field(description="기능별 분류된 유저 스토리 목록")
+    cross_cutting_concerns: List[CrossCuttingConcern] = Field(description="그룹화된 유저 스토리의 횡단 관심사 목록")
+
 # Agent States
 class DecomposeAgentState(TypedDict):
     user_request: str
@@ -79,7 +102,6 @@ class DecomposeAgentState(TypedDict):
     refined_user_stories_grouped: Optional[List[List[RefinedUserStoriesDraft]]]
     final_specifications: Optional[List[List[FullySpecifiedUserStoriesDraft]]]
     non_functional_requirements: Optional[NonFunctionalRequirements]
-    is_complete: bool
-    feedback: Optional[str]
+    architecture: Optional[ArchitectureResult]
 
     

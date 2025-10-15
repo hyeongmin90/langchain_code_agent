@@ -92,6 +92,13 @@ async def main():
 *   **기대 효과:** 사용자는 체계적인 할 일 관리를 통해 생산성을 향상시킬 수 있으며, 자신의 진행 상황을 타인에게 간편하게 공유(보고)할 수 있다.
     """
     final_user_stories = await generate_full_specification.main(temp)
-    
+
+    print("--------------------------------")
+    print(final_user_stories["epic"])
+    print(final_user_stories["final_specifications"])   
+    print(final_user_stories["architecture"])
+    print(final_user_stories["non_functional_requirements"])
+    print("--------------------------------")
+
 if __name__ == "__main__":
     asyncio.run(main())
