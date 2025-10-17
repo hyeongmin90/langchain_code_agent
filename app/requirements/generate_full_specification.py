@@ -7,9 +7,8 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
-from schemas import DecomposeAgentState, UserStoriesResult, RefinedUserStoriesResult, FinalUserStoriesResult, RefinedUserStoriesDraft, NonFunctionalRequirements, ScopeAndConstraints, ArchitectureResult
+from app.requirements.schemas.schemas import DecomposeAgentState, UserStoriesResult, RefinedUserStoriesResult, FinalUserStoriesResult, RefinedUserStoriesDraft, NonFunctionalRequirements, ScopeAndConstraints, ArchitectureResult
 import asyncio
 
 def decompose_into_user_stories(state: DecomposeAgentState):
@@ -118,6 +117,7 @@ def generate_non_functional_requirements(state: DecomposeAgentState):
     주어지는 유저 스토리 초안 목록을 검토하고 다음 [non_functional_requirements]와 [scope_and_constraints]에 비기능적 요구사항을 생성하라.
     비기능적 요구사항은 MVP를 완성하기 위해 필요한 요구사항을 생성하되, 추후 확장가능성을 고려하여 제약조건을 추가하라.
     배포, 로깅, 모니터링 같은 MVP 단계에서 필요하지 않은 요구사항은 제외하라.
+    기술 스택은 명시하지 마라.
 
     [non_functional_requirements]
     프로젝트 전체에 적용되어야 하는 비기능적 요구사항을 문자열 목록으로 여기에 작성하십시오.
@@ -158,7 +158,8 @@ def generate_non_functional_requirements(state: DecomposeAgentState):
     print("--------------------------------")
 
     return {
-        "non_functional_requirements": result
+        "non_functional_requirements": result.non_functional_requirements,
+        "scope_and_constraints": result.scope_and_constraints
     }
 
 def group_stories_by_functionality(state: DecomposeAgentState):
@@ -419,6 +420,7 @@ async def main(user_request: str):
         "refined_user_stories": None,
         "refined_user_stories_grouped": None,
         "non_functional_requirements": None,
+        "scope_and_constraints": None,
         "final_specifications": None,
         "architecture": None
     }
