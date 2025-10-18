@@ -9,7 +9,17 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import StateGraph, START, END
 
-from app.requirements.schemas.schemas import DecomposeAgentState, UserStoriesResult, NonFunctionalRequirements, GroupedUserStoriesResult, DetailedUserStoriesResult, GroupedUserStories, DependenciesResult, CrossCuttingConcernsResult
+from app.requirements.schemas.schemas import (
+    DecomposeAgentState,
+    UserStoriesResult,
+    NonFunctionalRequirements,
+    GroupedUserStoriesResult,
+    DetailedUserStoriesResult,
+    GroupedUserStories,
+    DependenciesResult,
+    CrossCuttingConcernsResult,
+    DetailedUserStoriesGroup
+)
 import asyncio
 
 def decompose_into_user_stories(state: DecomposeAgentState):
