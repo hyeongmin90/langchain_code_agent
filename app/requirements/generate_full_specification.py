@@ -8,7 +8,8 @@ from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, SystemM
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import StateGraph, START, END
-from app.requirements.schemas.schemas import DecomposeAgentState, UserStoriesResult, RefinedUserStoriesResult, FinalUserStoriesResult, RefinedUserStoriesDraft, NonFunctionalRequirements, ScopeAndConstraints, ArchitectureResult
+
+from app.requirements.schemas.schemas import DecomposeAgentState, UserStoriesResult, NonFunctionalRequirements, GroupedUserStoriesResult, DetailedUserStoriesResult, GroupedUserStories, DependenciesResult, CrossCuttingConcernsResult
 import asyncio
 
 def decompose_into_user_stories(state: DecomposeAgentState):
@@ -102,7 +103,7 @@ def refine_user_stories(state: DecomposeAgentState):
 
     return {
         "epic": result.epic,
-        "refined_user_stories": result.user_stories_draft
+        "refined_user_stories": result
     }
 
 def generate_non_functional_requirements(state: DecomposeAgentState):
@@ -158,43 +159,38 @@ def generate_non_functional_requirements(state: DecomposeAgentState):
     print("--------------------------------")
 
     return {
-        "non_functional_requirements": result.non_functional_requirements,
-        "scope_and_constraints": result.scope_and_constraints
+        "non_functional_requirements": result
     }
 
 def group_stories_by_functionality(state: DecomposeAgentState):
-    print("--- 📝 유저 스토리 기능별 분류 중... ---")
+    print("--- 📝 유저 스토리 그룹화 중... ---")  
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     system_prompt = """
     [역할]
-    당신은 소프트웨어 아키텍트입니다. 정제된 유저스토리들을 분석하여 기능별로 그룹화하고, 각 그룹의 에픽을 정의하며, 그룹 간 의존성을 식별하는 작업을 수행합니다.
+    당신은 수많은 프로젝트를 성공으로 이끈 20년 경력의 시니어 애자일 프로덕트 오너입니다. 
+    
+    [지시]  
+    주어지는 유저 스토리 목록을 검토하고 우선순위를 부여하고, 다음 [우선순위 부여 규칙]과 [그룹화 규칙]에 따라 수정 및 개선하여 그룹화된 유저 스토리 목록을 생성하라.
+    그룹간의 의존성을 분석하고, 횡단 관심사를 식별하라.
 
-    [작업 순서]
+    [그룹 설명]
+    목표: 이 그룹의 핵심적인 기능에 대해 간단한 설명을 작성하라. 
 
-    [1단계: 도메인 엔티티 추출]
-    각 유저스토리의 title과 description에서 핵심 명사(엔티티)를 추출합니다.
-    - 비즈니스 객체: User, Order, Product, Payment 등
-    - 동작 주체: 사용자, 관리자, 시스템 등
-    - 중요한 개념: 인증, 결제, 알림 등
-
-    [2단계: 유사도 기반 클러스터링]
-    추출된 엔티티와 유저스토리의 관련성을 분석하여 그룹화합니다.
+    [우선 순위 부여 규칙]
+    - 스토리 단위 우선순위 부여 (Prioritize): 각 스토리가 프로젝트의 핵심 성공(MVP)에 얼마나 중요한지를 판단하여 priority (High, Medium, Low)를 부여하라.
+    - 그룹 단위 우선순위 부여 (Prioritize): 각 그룹이 프로젝트의 핵심 성공(MVP)에 얼마나 중요한지를 판단하여 priority (High, Medium, Low)를 부여하라.
 
     [그룹화 기준]
-    1. 같은 엔티티를 다루는가? (Order 관련은 하나로)
-    2. 같은 비즈니스 프로세스인가? (로그인-회원가입은 인증으로)
-    3. 라이프사이클이 연관되는가? (주문-결제는 밀접)
-    4. 액터가 동일한가? (사용자 vs 관리자)
+    한 그룹은 한가지의 주요 기능을 수행하는 유저스토리들로 구성되어야 한다.
+    그룹 내의 유저스토리들은 서로 관련성이 있어야 한다.
+    예시: 회원가입-로그인: 인증/인가, 주문-결제: 결제 처리
 
     [그룹 크기]
-    - 한 그룹당 3-15개 유저스토리가 적당
+    - 한 그룹당 3-12개 유저스토리가 적당
     - 너무 많으면: 하위 그룹으로 분할
     - 너무 적으면: 관련 그룹과 통합
 
-    [3단계: 에픽 생성]
-    각 그룹에 대해 에픽을 정의합니다.
-
-    [4단계: 의존성 분석]
+    [의존성 분석]
     에픽 간의 의존 관계를 식별합니다.
 
     [의존성 판단 기준]
@@ -214,69 +210,13 @@ def group_stories_by_functionality(state: DecomposeAgentState):
     - 순환 의존 방지 (A→B, B→A 동시 발생 시 에픽 경계 재조정)
     - 의존성이 너무 많으면 에픽 분할 고려
 
-    [5단계: 횡단 관심사 식별]
+    [횡단 관심사 식별]
     여러 에픽에 공통으로 필요한 기능을 식별합니다.
 
     [횡단 관심사 예시 - MVP 기준]
     - 인증/인가: JWT 또는 세션 기반 인증
     - 에러 처리: 통일된 에러 응답 형식
     - 로깅: 기본 API 요청/응답 로깅
-
-    [출력 형식]
-    - 반드시 유효한 pydantic 모델의 형식으로 출력하라.
-
-    [주의사항]
-    - 에픽 이름은 명확하고 비즈니스 용어를 사용하라
-    - 기술 용어보다 도메인 용어를 우선하세요 (예: "JWT 모듈" X, "사용자 인증" O)
-    - dependencies는 각 에픽 안에 배열로 포함하라
-    - 순환 의존이 발견되면 에픽 경계를 재조정하라
-    - cross_cutting_concerns는 Spring Boot 구현 관점에서 식별하라
-    """
-
-    human_prompt = """
-    에픽:
-    {epic}
-    전체 유저 스토리 목록:
-    {refined_user_stories}
-    """
-
-    prompt = ChatPromptTemplate([
-        ("system", system_prompt),
-        ("human", human_prompt)
-    ])
-    
-    chain = prompt | llm.with_structured_output(ArchitectureResult)
-    
-    result = chain.invoke({
-        "epic": state["epic"],
-        "refined_user_stories": state["refined_user_stories"]
-    })
-    
-    print("작성된 아키텍처 -----------------")
-    print(result)
-    print("--------------------------------")
-
-    return {
-        "architecture": result
-    }
-
-def chunk_stories_for_generation(state: DecomposeAgentState):
-    print("--- 📝 유저 스토리 그룹화 중... ---")  
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
-    system_prompt = """
-    [역할]
-    당신은 수많은 프로젝트를 성공으로 이끈 20년 경력의 시니어 애자일 프로덕트 오너입니다. 
-    
-    [지시]  
-    주어지는 유저 스토리 목록을 검토하고 우선순위를 부여하고, 다음 [우선순위 부여 규칙]과 [그룹화 규칙]에 따라 수정 및 개선하여 그룹화된 유저 스토리 목록을 생성하라.
-
-    [우선 순위 부여 규칙]
-    - 우선순위 부여 (Prioritize): 각 스토리가 프로젝트의 핵심 성공(MVP)에 얼마나 중요한지를 판단하여 priority (High, Medium, Low)를 부여하라.
-
-    [그룹화 규칙]
-    - 유사하거나 연관된 스토리는 그룹화하여 그룹화된 스토리 목록으로 생성하라.
-    - 그룹은 1-3개의 스토리로 구성되어야 한다.
-    - 1개의 스토리로 이뤄진 그룹의 생성을 최대한 피하라.
 
     [출력 형식]
     - 반드시 유효한 pydantic 모델의 형식으로 출력하라.
@@ -288,7 +228,7 @@ def chunk_stories_for_generation(state: DecomposeAgentState):
         ("human", "에픽:\n {epic}\n\n정제된 유저 스토리 목록:\n {refined_user_stories}")
     ])
     
-    chain = prompt | llm.with_structured_output(RefinedUserStoriesResult)
+    chain = prompt | llm.with_structured_output(GroupedUserStoriesResult)
     
     result = chain.invoke({
         "epic": state["epic"],
@@ -296,40 +236,39 @@ def chunk_stories_for_generation(state: DecomposeAgentState):
     })
     
     return {
-        "refined_user_stories_grouped": result.refined_user_stories
+        "grouped_user_stories": result.grouped_user_stories,
+        "dependencies": DependenciesResult(dependencies=result.group_dependencies),
+        "cross_cutting_concerns": CrossCuttingConcernsResult(cross_cutting_concerns=result.cross_cutting_concerns)
     }
-
 
 async def generate_final_specifications(state: DecomposeAgentState):
     print("--- 📝 유저 스토리 상세화 중... ---")
     
-    LIMIT = 5
+    LIMIT = 2
     semaphore = asyncio.Semaphore(LIMIT)
     project_brief = f"에픽: {state['epic']}\n 비기능적 요구사항: {state['non_functional_requirements'].non_functional_requirements}\n 범위, 가정, 제약: {state['non_functional_requirements'].scope_and_constraints}"
-    tasks = [generate_specs_for_chunk(i, semaphore, user_story_group, project_brief) for i, user_story_group in enumerate(state["refined_user_stories_grouped"])]
-
     
+    tasks = [generate_specs_for_chunk(i, semaphore, user_story_group, project_brief) for i, user_story_group in enumerate(state["grouped_user_stories"])]
+
     results = await asyncio.gather(*tasks)
 
     flattened_stories = [item for sublist in results for item in sublist]
 
-    final_result = {
-        "final_user_stories": results
-    }
+    final_result = DetailedUserStoriesGroup(user_story_group=results)
 
-    print("최종 결과물 -----------------")
+    print("상세화 결과물 -----------------")
     for story in flattened_stories:
-        print(story.model_dump_json(indent=2))
+        print(story)
     print("--------------------------------")
 
     return {
-        "final_specifications": final_result
+        "final_result": final_result
     }
 
 async def generate_specs_for_chunk(
     task_id: int, 
     semaphore: asyncio.Semaphore, 
-    user_story_group: List[RefinedUserStoriesDraft], 
+    user_story_group: GroupedUserStories, 
     project_brief: str
     ):
     async with semaphore:
@@ -350,14 +289,8 @@ async def generate_specs_for_chunk(
         [지시 및 작성 규칙]
         주어진 **[입력 데이터]**를 바탕으로, 각 사용자 스토리에 대해 아래의 detailed_specification과 acceptance_criteria 필드를 채워라.
 
-        1. detailed_specification 필드 작성 규칙:
-        목표: 이 스토리를 구현하는 데 필요한 모든 기능적 요구사항을 상세히 기술하라.
-
-        포함할 내용:
-        데이터 모델: 이 기능을 위해 필요한 데이터베이스 테이블 스키마 또는 객체 모델을 정의하라. (필드명, 타입, 제약조건 등)
-        UI/UX 동작: 사용자가 보게 될 화면의 구성 요소와 구체적인 상호작용 방식을 설명하라.
-        유효성 검사 규칙: 서버와 클라이언트 양쪽에서 수행되어야 할 모든 데이터 유효성 검사 규칙을 명시하라. (필수 여부, 길이 제한, 형식 등)
-        기능 로직: 기능이 어떤 순서로, 어떤 조건에 따라 동작해야 하는지 논리적인 흐름을 설명하십시오.
+        1. description 필드 작성 규칙:
+        목표: 이 스토리의 핵심적인 기능에 대해 간단한 설명을 작성하라. 
 
         2. acceptance_criteria 필드 작성 규칙:
         목표: 이 스토리가 '완료'되었음을 객관적으로 증명할 수 있는 여러 개의 검증 시나리오를 List[AcceptanceCriteria] 형태로 작성하라.
@@ -369,12 +302,18 @@ async def generate_specs_for_chunk(
         when: 사용자가 취하는 특정 행동
         then: 그 행동으로 인해 발생해야 하는 기대 결과
         구체성: "사용자 정보가 보인다"와 같은 모호한 표현 대신, "화면 상단에 사용자의 이름과 이메일 주소가 표시된다"처럼 구체적이고 검증 가능하게 작성하라.
+        
+        3. business_rules 필드 작성 규칙:
+        목표: 이 스토리에 대한 비즈니스 규칙을 명시하라.
+        포함할 내용:
+        비즈니스 규칙: 이 스토리에 대한 비즈니스 규칙을 명시하라. 백엔드 기능에 대한 비즈니스 규칙만 명시하라.
+        구체성: "사용자 정보가 보인다"와 같은 모호한 표현 대신, "화면 상단에 사용자의 이름과 이메일 주소가 표시된다"처럼 구체적이고 검증 가능하게 작성하라.
 
         [역할 경계]
         이 명세서는 '무엇을(What)' 만들지에만 집중합니다. '어떻게(How)' 만들지에 해당하는 특정 기술 스택(예: React, Django)이나 라이브러리 이름은 절대로 명시하지 마라.
 
         [산출물 기준]
-        최종 산출물은 입력받은 user_story_group의 각 스토리 객체에 detailed_specification과 acceptance_criteria 필드가 완벽하게 채워진 Pydantic 모델 형식의 JSON이어야 한다.
+        최종 산출물은 입력받은 user_story_group의 각 스토리 객체에 description, acceptance_criteria, business_rules 필드가 완벽하게 채워진 Pydantic 모델 형식의 JSON이어야 한다.
         """
         
         prompt = ChatPromptTemplate([
@@ -382,14 +321,15 @@ async def generate_specs_for_chunk(
             ("human", "프로젝트 브리프: {project_brief}\n정제된 사용자 스토리 그룹:\n {user_story_group}")
         ])
 
-        chain = prompt | llm.with_structured_output(FinalUserStoriesResult)
+        chain = prompt | llm.with_structured_output(DetailedUserStoriesResult)
 
         result = await chain.ainvoke({
             "user_story_group": user_story_group,
             "project_brief": project_brief
         })
         print(f"Task {task_id} completed-------")
-        return result.final_user_stories
+        return result
+
 
 async def main(user_request: str):
     load_dotenv()
@@ -400,15 +340,13 @@ async def main(user_request: str):
     workflow.add_node("generate_non_functional_requirements", generate_non_functional_requirements)
     workflow.add_node("refine_user_stories", refine_user_stories)   
     workflow.add_node("group_stories_by_functionality", group_stories_by_functionality)
-    workflow.add_node("chunk_stories_for_generation", chunk_stories_for_generation)
     workflow.add_node("generate_final_specifications", generate_final_specifications)
 
     workflow.add_edge(START, "decompose_into_user_stories")
     workflow.add_edge("decompose_into_user_stories", "refine_user_stories")
     workflow.add_edge("refine_user_stories", "generate_non_functional_requirements")
     workflow.add_edge("generate_non_functional_requirements", "group_stories_by_functionality")
-    workflow.add_edge("group_stories_by_functionality", "chunk_stories_for_generation")
-    workflow.add_edge("chunk_stories_for_generation", "generate_final_specifications")
+    workflow.add_edge("group_stories_by_functionality", "generate_final_specifications")
     workflow.add_edge("generate_final_specifications", END)
 
     app = workflow.compile()
@@ -418,14 +356,12 @@ async def main(user_request: str):
         "epic": None,
         "raw_user_stories": None,
         "refined_user_stories": None,
-        "refined_user_stories_grouped": None,
+        "grouped_user_stories": None,
+        "final_result": None,
         "non_functional_requirements": None,
-        "scope_and_constraints": None,
-        "final_specifications": None,
-        "architecture": None
+        "dependencies": None,
+        "cross_cutting_concerns": None,
     }
 
-    final_state = await app.ainvoke(initial_state)
-
-    return final_state
+    return await app.ainvoke(initial_state)
 

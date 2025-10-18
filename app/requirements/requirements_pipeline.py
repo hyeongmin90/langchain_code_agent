@@ -10,8 +10,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
-import user_qustion_gen
-import generate_full_specification
+from app.requirements import user_qustion_gen
+from app.requirements import generate_full_specification
 
 
 async def main():
@@ -93,12 +93,17 @@ async def main():
     """
     final_user_stories = await generate_full_specification.main(temp)
 
-    print("--------------------------------")
-    print(final_user_stories["epic"])
-    print(final_user_stories["final_specifications"])   
-    print(final_user_stories["architecture"])
-    print(final_user_stories["non_functional_requirements"])
-    print("--------------------------------")
+    print("=== 에픽 ===")
+    print(final_user_stories["epic"].model_dump_json(indent=2))
+    print("\n=== 최종 결과 ===")
+    print(final_user_stories["final_result"].model_dump_json(indent=2))   
+    print("\n=== 의존성 ===")
+    print(final_user_stories["dependencies"].model_dump_json(indent=2))
+    print("\n=== 횡단 관심사 ===")
+    print(final_user_stories["cross_cutting_concerns"].model_dump_json(indent=2))
+    print("\n=== 비기능적 요구사항 ===")
+    print(final_user_stories["non_functional_requirements"].model_dump_json(indent=2))
+    print("\n=== 완료 ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
