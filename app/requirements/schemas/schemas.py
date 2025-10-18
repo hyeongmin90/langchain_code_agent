@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Literal
 from pydantic import BaseModel, Field
 
 #decompose_into_user_stories
@@ -32,9 +32,10 @@ class GroupedUserStories(BaseModel):
     refined_user_stories: List[RefinedUserStoriesDraft] = Field(description="그룹화된 정제된 유저 스토리 목록")
 
 class Dependency(BaseModel):
-    to: str = Field(description="의존성 대상")
-    dependency_type: str = Field(description="의존성 타입")
-    reason: str = Field(description="의존성 설명")
+    from_module: str = Field(description="의존성 출처 모듈 식별자")
+    to_module: str = Field(description="의존성 대상 모듈 식별자")
+    dependency_type: Literal["needs", "uses", "triggers"] = Field(description="의존성 타입")
+    reason: str = Field(description="의존성 이유")
 
 class CrossCuttingConcern(BaseModel):
     name: str = Field(description="횡단 관심사 이름")
