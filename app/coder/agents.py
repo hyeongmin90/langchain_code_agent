@@ -57,35 +57,10 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
 3. 우선순위를 명확히 정합니다 (낮을수록 먼저 구현)
 4. 첫 번째 에픽은 항상 "Project Setup"이어야 합니다
 
-### 출력 형식:
-- JSON 형식으로 출력합니다
-- Epic은 id, title, description, priority를 포함합니다
 
-### 예시:
-입력: "회원가입, 로그인, 게시판 기능이 있는 블로그 MVP"
-출력:
-{{
-    "epics": [
-        {{
-            "id": "epic-1",
-            "title": "Project Setup",
-            "description": "Spring Boot 프로젝트 초기 설정, 의존성 설정, application.yml 설정",
-            "priority": 1
-        }},
-        {{
-            "id": "epic-2",
-            "title": "User Domain (Auth)",
-            "description": "회원가입, 로그인, JWT 인증 기능",
-            "priority": 2
-        }},
-        {{
-            "id": "epic-3",
-            "title": "Post Domain (Core)",
-            "description": "게시글 CRUD 기능",
-            "priority": 3
-        }}
-    ]
-}}
+### 출력 형식:
+- 주어진 Pydantic 모델 형식으로 출력합니다
+- Epic은 id, title, description, priority를 포함합니다
 """
     
     prompt = ChatPromptTemplate([
@@ -136,10 +111,7 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
     print(f"현재 Epic: [{current_epic.id}] {current_epic.title}")
     print(f"설명: {current_epic.description}\n")
     
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",
-        temperature=0.7
-    )
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     
     system_prompt = """
 당신은 소프트웨어 프로젝트의 **설계자**입니다.
@@ -156,32 +128,13 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 3. 파일 간 의존성을 명확히 합니다
 4. 구현 순서를 고려합니다 (Entity → Repository → DTO → Service → Controller)
 
-### 출력 형식:
-- JSON 형식으로 출력합니다
-- 각 Task는 id, file_name, file_path, description, dependencies를 포함합니다
+### 규칙:
+1. DB는 H2 Database를 사용합니다
+2. Gradle을 사용합니다
 
-### 예시:
-입력: Epic "User Domain (Auth)"
-출력:
-{{
-    "epic_id": "epic-2",
-    "tasks": [
-        {{
-            "id": "task-2-1",
-            "file_name": "User.java",
-            "file_path": "src/main/java/com/example/domain/user/",
-            "description": "User 엔티티: id, username, password, email, createdAt 필드 포함",
-            "dependencies": []
-        }},
-        {{
-            "id": "task-2-2",
-            "file_name": "UserRepository.java",
-            "file_path": "src/main/java/com/example/domain/user/",
-            "description": "User JPA Repository: findByUsername 메서드 포함",
-            "dependencies": ["task-2-1"]
-        }}
-    ]
-}}
+### 출력 형식:
+- 주어진 Pydantic 모델 형식으로 출력합니다
+- 각 Task는 id, file_name, file_path, description, dependencies를 포함합니다
 """
     
     prompt = ChatPromptTemplate([
@@ -235,10 +188,7 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
     print(f"Epic: [{current_epic.id}] {current_epic.title}")
     print(f"생성할 파일 수: {len(task_list.tasks)}\n")
     
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",
-        temperature=0.3
-    )
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     
     generated_files = []
     
@@ -273,6 +223,8 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
                 for dep in dep_files:
                     context += f"\n// {dep.file_name}\n{dep.code_content[:500]}...\n"
         
+
+
         prompt = ChatPromptTemplate([
             ("system", system_prompt),
             ("human", """
@@ -305,7 +257,7 @@ Task ID: {task_id}
                 code_content = "\n".join(lines[1:-1])
             
             # 파일 저장
-            full_path = Path("generated") / task.file_path / task.file_name
+            full_path = Path("generated") / state["project_uuid"] / task.file_path / task.file_name
             full_path.parent.mkdir(parents=True, exist_ok=True)
             
             with open(full_path, "w", encoding="utf-8") as f:

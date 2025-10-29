@@ -78,6 +78,8 @@ class VerificationResult(BaseModel):
 
 class MultiAgentState(TypedDict):
     """멀티 에이전트 시스템 전체 상태"""
+
+    project_uuid: str
     # 입력
     user_request: str
     

@@ -4,6 +4,7 @@
 
 from langgraph.graph import StateGraph, START, END
 from schemas import MultiAgentState
+import uuid
 from agents import (
     analyst_agent,
     planner_agent,
@@ -98,6 +99,7 @@ def run_multi_agent_system(user_request: str):
     
     # 초기 상태
     initial_state = {
+        "project_uuid": str(uuid.uuid4()),
         "user_request": user_request,
         "current_status": "analyzing",
         "current_epic_index": 0,
