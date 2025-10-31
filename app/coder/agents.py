@@ -45,17 +45,12 @@ def extract_token_usage(result, step_name: str) -> TokenUsage:
     total_tokens = 0
     
     # AIMessage의 response_metadata에서 추출
-    if hasattr(result, 'response_metadata'):
-        response_metadata = result.response_metadata
-        usage = response_metadata.get('usage_metadata', {})
+    if hasattr(result, 'usage_metadata'):
+        response_metadata = result.usage_metadata
+        input_tokens = response_metadata.get('input_tokens', 0)
+        output_tokens = response_metadata.get('output_tokens', 0)
+        total_tokens = response_metadata.get('total_tokens', 0)
         
-        input_tokens = usage.get('prompt_token_count', 0)
-        output_tokens = usage.get('candidates_token_count', 0)
-        total_tokens = usage.get('total_token_count', 0)
-    
-    # total_tokens가 없으면 계산
-    if total_tokens == 0:
-        total_tokens = input_tokens + output_tokens
     
     token_usage = TokenUsage(
         step_name=step_name,
@@ -72,7 +67,7 @@ def extract_token_usage(result, step_name: str) -> TokenUsage:
 # 0. Analyze User Request (사용자 요청 분석)
 # ============================================
 
-def analsis_user_request(state: MultiAgentState) -> str:
+def analyze_user_request(state: MultiAgentState) -> str:
     """
     사용자 요청을 분석하여 Epic List를 생성합니다.
     """
@@ -125,12 +120,17 @@ def analsis_user_request(state: MultiAgentState) -> str:
     chain = prompt | llm
     result = chain.invoke({"request": user_request})
 
+    token_usage = extract_token_usage(result, f"Analyze User Request Agent")
+    token_usage_list = state.get("token_usage_list", [])
+    token_usage_list.append(token_usage)
+
     return {
-        "analyzed_user_request": result.content
+        "analyzed_user_request": result.content,
+        "token_usage_list": token_usage_list
     }
 
 # ============================================
-# 0. Setup Project (프로젝트 설정)
+# 1. Setup Project (프로젝트 설정)
 # ============================================
 
 def setup_project(state: MultiAgentState) -> Dict[str, Any]:
@@ -157,20 +157,20 @@ def setup_project(state: MultiAgentState) -> Dict[str, Any]:
     }
 
 # ============================================
-# 1. Analyst Agent (분석 에이전트)
+# 2. Analyst Agent (분석 에이전트)
 # ============================================
 
 def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
     """
     역할: 전략가
-    입력: 사용자의 모호한 요청
+    입력: 1차 분석된 사용자 요청
     출력: Epic List (간결한 에픽 목록)
     """
     print("\n" + "="*80)
     print("🎯 [Analyst Agent] 분석 시작")
     print("="*80)
     
-    user_request = state["user_request"]
+    user_request = state["analyzed_user_request"]
     print(f"사용자 요청: {user_request}\n")
     
     llm = get_llm()
@@ -178,7 +178,7 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
     system_prompt = """
 당신은 소프트웨어 프로젝트의 **전략가**입니다.
 
-사용자의 모호하고 큰 요청을 받아, **간결한 '에픽(Epic) 목록'**으로 분해하는 것이 당신의 임무입니다.
+사용자의 1차 분석된 요청을 받아, **간결한 '에픽(Epic) 목록'**으로 분해하는 것이 당신의 임무입니다.
 또한 프로젝트의 이름을 정하는 것도 당신의 임무입니다. 프로젝트 이름은 영어로 정합니다.
 
 ### 에픽이란?
@@ -189,11 +189,10 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
 1. 사용자 요청을 도메인별로 분해합니다
 2. 각 에픽은 **독립적으로 구현 가능**해야 합니다
 3. 우선순위를 명확히 정합니다 (낮을수록 먼저 구현)
-4. 첫 번째 에픽은 항상 "Project Setup"이어야 합니다
-4.1 Project Setup은 기본 스프링 부트 템플릿을 복사하여 생성하며 build.gradle.kts, settings.gradle.kts, application.yml만 수정하여 사용합니다.
-4.2 Project Setup의 설명에는 필요한 의존성을 모두 적어야하며, 누락되서는 안된다.
-build.gradle.kts, settings.gradle.kts 파일은 경로를 지정하지 마세요.
-실행 파일은 별도의 경로없이 src/main/java/com/example/{project_name}/*.Application.java에 위치합니다.
+4. 첫 번째 에픽은 항상 "Project Setup"이어야 하며, 설명에는 다음이 포함되어야 합니다.
+- Project Setup은 build.gradle.kts, settings.gradle.kts, application.yml, *.Application.java 파일만 생성합니다.
+- 필요한 의존성을 모두 적어야하며, 누락되서는 안된다.
+- build.gradle.kts, settings.gradle.kts 파일은 Root 경로에 위치합니다.
 
 ### 출력 형식:
 - 주어진 Pydantic 모델 형식으로 출력합니다
@@ -234,7 +233,7 @@ build.gradle.kts, settings.gradle.kts 파일은 경로를 지정하지 마세요
     }
 
 # ============================================
-# 2. Planner Agent (계획 에이전트)
+# 3. Planner Agent (계획 에이전트)
 # ============================================
 
 def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
@@ -274,39 +273,25 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 2. Spring Boot 베스트 프랙티스를 따릅니다
 3. 파일 간 의존성을 명확히 합니다
 4. 구현 순서를 고려합니다 (Entity → Repository → DTO → Service → Controller)
+5. 에픽간의 중복이 존재해서는 안됩니다.
 
 ### 규칙:
 1. DB는 H2 Database를 사용합니다
 2. Gradle-kotlin을 사용합니다
+3. 파일경로를 지정하지 않으면 프로젝트 root 경로에 위치합니다.
+4. epic명이 Project Setup이 아닐 경우엔 설정파일(application.yml, build.gradle.kts, *.Application.java)을 제외한다.
 
 ### 파일 구조
-다음의 파일 구조 예시를 따르세요.
-보안, 설정, 유틸리티 파일등의 공통 파일은 common 폴더에 위치합니다.
+설정 파일을 제외한 모든 파일은 src/main/java/com/example/{project_name} 폴더에 위치합니다.
+보안, 설정, 유틸리티 파일등의 공통 파일은 common/(폴더명) 폴더에 위치합니다.
+    - 폴더명은 다음으로 제한됩니다. config, exception, utils
 도메인별 파일은 domain 폴더에 위치합니다.
+Dto 파일의 경우 domain/(도메인명)/dto 폴더에 위치합니다.
 
-
-### 파일 구조 예시
-src/main/
-    ├── resources/
-    │   └── application.yml
-    └── java/com/example/project_name/
-        ├── *.Application.java
-        ├── domain/
-        |   └── user/
-        |       ├── UserService.java
-        |       ├── UserRepository.java
-        |       ├── User.java
-        |       ├── dto/
-        |       │   └── *.Dto.java
-        |       └── UserController.java
-        └── common/
-            ├── exception/
-            │   └── *.Exception.java
-            ├── config/
-            │   └── *.Config.java
-            └── utils/
-                └── *.Utils.java
-
+ex) src/main/java/com/example/{project_name}/common/config/SecurityConfig.java
+ex) src/main/java/com/example/{project_name}/domain/user/User.java
+ex) src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
+ex) build.gradle.kts
 
 ### 출력 형식:
 - 주어진 Pydantic 모델 형식으로 출력합니다
@@ -333,11 +318,9 @@ Epic 설명: {epic_description}
         "epic_description": current_epic.description
     })
     
-    # parsed: TaskList 객체, raw: AIMessage (토큰 정보 포함)
     result = response["parsed"]
     raw_message = response["raw"]
     
-    # 토큰 사용량 저장
     token_usage_list = state.get("token_usage_list", [])
     token_usage = extract_token_usage(raw_message, f"Planner Agent (Epic: {current_epic.id})")
     token_usage_list.append(token_usage)
@@ -354,7 +337,7 @@ Epic 설명: {epic_description}
     }
 
 # ============================================
-# 3. Coder Agent (코더 에이전트)
+# 4. Coder Agent (코더 에이전트)
 # ============================================
 
 def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
@@ -381,7 +364,6 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
     generated_files = []
     token_usage_list = state.get("token_usage_list", [])
     
-    # Task를 순회하며 파일 생성
     for i, task in enumerate(task_list.tasks, 1):
         print(f"[{i}/{len(task_list.tasks)}] 파일 생성 중: {task.file_name}")
         
@@ -392,7 +374,6 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
 
 ### 코드 작성 원칙:
 1. **코드만 출력**합니다 (설명이나 마크다운 문법 제외)
-2. Project Setup은 기본 스프링 부트 템플릿을 복사하여 사용하므로 build.gradle.kts, settings.gradle.kts, application.yml만 작성합니다.
 2. Spring Boot 베스트 프랙티스를 따릅니다
 3. 필요한 import 문을 모두 포함합니다
 4. Lombok 어노테이션을 적극 활용합니다
@@ -405,7 +386,6 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
 - 패키지명은 com.example.{project_name}을 기본으로 사용하세요
 """
         
-        # 이전에 생성된 파일 정보 (의존성 참고용)
         context = ""
         if task.dependencies:
             dep_files = [f for f in generated_files if f.task_id in task.dependencies]
@@ -432,7 +412,6 @@ Task ID: {task_id}
         chain = prompt | llm
         
         try:
-            # LLM 호출 (한 번만)
             result = chain.invoke({
                 "project_name": project_name,
                 "task_id": task.id,
@@ -442,13 +421,11 @@ Task ID: {task_id}
                 "context": context,
             })
             
-            # 토큰 사용량 저장
             token_usage = extract_token_usage(result, f"Coder Agent - {task.file_name}")
             token_usage_list.append(token_usage)
             
             code_content = result.content.strip()
             
-            # 코드 블록 제거
             if code_content.startswith("```"):
                 lines = code_content.split("\n")
                 code_content = "\n".join(lines[1:-1])
@@ -491,7 +468,6 @@ Task ID: {task_id}
     success_count = len([f for f in generated_files if f.status == "success"])
     print(f"\n✅ 코드 생성 완료: {success_count}/{len(generated_files)} 성공")
     
-    # 전체 생성된 파일 목록에 추가
     all_generated = state.get("all_generated_files", [])
     all_generated.extend(generated_files)
     
@@ -503,7 +479,7 @@ Task ID: {task_id}
     }
 
 # ============================================
-# 4. Verifier Agent (검증 에이전트)
+# 5. Verifier Agent (검증 에이전트)
 # ============================================
 
 def verifier_agent(state: MultiAgentState) -> Dict[str, Any]:

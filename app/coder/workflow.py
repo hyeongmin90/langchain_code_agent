@@ -10,7 +10,8 @@ from .agents import (
     analyst_agent,
     planner_agent,
     coder_agent,
-    verifier_agent
+    verifier_agent,
+    analyze_user_request
 )
 
 def should_continue(state: MultiAgentState) -> str:
@@ -48,14 +49,15 @@ def create_workflow():
     
     workflow = StateGraph(MultiAgentState)
     
+    workflow.add_node("analyze_user_request", analyze_user_request)
     workflow.add_node("setup_project", setup_project)
     workflow.add_node("analyst", analyst_agent)
     workflow.add_node("planner", planner_agent)
     workflow.add_node("coder", coder_agent)
     workflow.add_node("verifier", verifier_agent)
     
-    workflow.add_edge(START, "setup_project")
-    # workflow.add_edge("setup_project", END)
+    workflow.add_edge(START, "analyze_user_request")
+    workflow.add_edge("analyze_user_request", "setup_project")
     workflow.add_edge("setup_project", "analyst")
     workflow.add_edge("analyst", "planner")
     workflow.add_edge("planner", "coder")
@@ -101,7 +103,7 @@ def run_multi_agent_system(user_request: str):
         "current_epic_index": 0,
         "completed_epics": [],
         "retry_count": 0,
-        "max_retries": 3,
+        "max_retries": 1,
         "all_generated_files": [],
         "token_usage_list": []
     }
