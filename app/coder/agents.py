@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Dict, Any, List
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.callbacks import BaseCallbackHandler
 from .schemas import (
     MultiAgentState,
     EpicList,
@@ -30,46 +29,44 @@ def get_llm(model: str = "gemini-2.5-pro"):
     return ChatGoogleGenerativeAI(model=model)
 
 
-class TokenCounterCallback(BaseCallbackHandler):
-    """토큰 사용량을 추적하는 콜백"""
+def extract_token_usage(result, step_name: str) -> TokenUsage:
+    """
+    LLM 응답에서 직접 토큰 정보를 추출합니다.
     
-    def __init__(self):
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.total_tokens = 0
+    Args:
+        result: LLM 응답 객체 (AIMessage 등)
+        step_name: 단계 이름
     
-    def on_llm_end(self, response, **kwargs):
-        """LLM 호출이 끝날 때 토큰 정보 추출"""
-        if response.llm_output:
-            # Google Gemini의 경우
-            usage_metadata = response.llm_output.get('usage_metadata', {})
-            if usage_metadata:
-                self.input_tokens = usage_metadata.get('prompt_token_count', 0)
-                self.output_tokens = usage_metadata.get('candidates_token_count', 0)
-                self.total_tokens = usage_metadata.get('total_token_count', 0)
-        
-        # generations에서 토큰 정보 확인
-        for generation_list in response.generations:
-            for generation in generation_list:
-                if hasattr(generation, 'generation_info') and generation.generation_info:
-                    usage = generation.generation_info.get('usage_metadata', {})
-                    if usage:
-                        self.input_tokens = usage.get('prompt_token_count', 0)
-                        self.output_tokens = usage.get('candidates_token_count', 0)
-                        self.total_tokens = usage.get('total_token_count', 0)
+    Returns:
+        TokenUsage 객체
+    """
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
     
-    def get_token_usage(self, step_name: str) -> TokenUsage:
-        """토큰 사용량을 TokenUsage 객체로 반환"""
-        token_usage = TokenUsage(
-            step_name=step_name,
-            input_tokens=self.input_tokens,
-            output_tokens=self.output_tokens,
-            total_tokens=self.total_tokens if self.total_tokens > 0 else self.input_tokens + self.output_tokens
-        )
+    # AIMessage의 response_metadata에서 추출
+    if hasattr(result, 'response_metadata'):
+        response_metadata = result.response_metadata
+        usage = response_metadata.get('usage_metadata', {})
         
-        print(f"📊 토큰 사용량 - {step_name}: 입력={self.input_tokens:,}, 출력={self.output_tokens:,}, 총={token_usage.total_tokens:,}")
-        
-        return token_usage
+        input_tokens = usage.get('prompt_token_count', 0)
+        output_tokens = usage.get('candidates_token_count', 0)
+        total_tokens = usage.get('total_token_count', 0)
+    
+    # total_tokens가 없으면 계산
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    
+    token_usage = TokenUsage(
+        step_name=step_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens
+    )
+    
+    print(f"📊 토큰 사용량 - {step_name}: 입력={input_tokens:,}, 출력={output_tokens:,}, 총={total_tokens:,}")
+    
+    return token_usage
 
 # ============================================
 # 0. Analyze User Request (사용자 요청 분석)
@@ -208,16 +205,17 @@ build.gradle.kts, settings.gradle.kts 파일은 경로를 지정하지 마세요
         ("human", "사용자 요청: {request}\n\n위 요청을 분석하여 Epic List를 생성해주세요.")
     ])
     
-    # 토큰 카운터 콜백 생성
-    token_counter = TokenCounterCallback()
+    # structured output with raw response (토큰 정보 포함)
+    chain = prompt | llm.with_structured_output(EpicList, include_raw=True)
+    response = chain.invoke({"request": user_request})
     
-    # structured output으로 한 번만 호출 (콜백으로 토큰 추적)
-    chain = prompt | llm.with_structured_output(EpicList)
-    result = chain.invoke({"request": user_request}, config={"callbacks": [token_counter]})
+    # parsed: EpicList 객체, raw: AIMessage (토큰 정보 포함)
+    result = response["parsed"]
+    raw_message = response["raw"]
     
     # 토큰 사용량 저장
     token_usage_list = state.get("token_usage_list", [])
-    token_usage = token_counter.get_token_usage("Analyst Agent")
+    token_usage = extract_token_usage(raw_message, "Analyst Agent")
     token_usage_list.append(token_usage)
     
     print(f"✅ 생성된 Epic 목록 ({len(result.epics)}개):")
@@ -326,21 +324,22 @@ Epic 설명: {epic_description}
 """)
     ])
     
-    # 토큰 카운터 콜백 생성
-    token_counter = TokenCounterCallback()
-    
-    # structured output으로 한 번만 호출 (콜백으로 토큰 추적)
-    chain = prompt | llm.with_structured_output(TaskList)
-    result = chain.invoke({
+    # structured output with raw response (토큰 정보 포함)
+    chain = prompt | llm.with_structured_output(TaskList, include_raw=True)
+    response = chain.invoke({
         "project_name": epic_list.project_name,
         "epic_id": current_epic.id,
         "epic_title": current_epic.title,
         "epic_description": current_epic.description
-    }, config={"callbacks": [token_counter]})
+    })
+    
+    # parsed: TaskList 객체, raw: AIMessage (토큰 정보 포함)
+    result = response["parsed"]
+    raw_message = response["raw"]
     
     # 토큰 사용량 저장
     token_usage_list = state.get("token_usage_list", [])
-    token_usage = token_counter.get_token_usage(f"Planner Agent (Epic: {current_epic.id})")
+    token_usage = extract_token_usage(raw_message, f"Planner Agent (Epic: {current_epic.id})")
     token_usage_list.append(token_usage)
     
     print(f"✅ 생성된 Task 목록 ({len(result.tasks)}개):")
@@ -433,9 +432,7 @@ Task ID: {task_id}
         chain = prompt | llm
         
         try:
-            # 토큰 카운터 콜백 생성
-            token_counter = TokenCounterCallback()
-            
+            # LLM 호출 (한 번만)
             result = chain.invoke({
                 "project_name": project_name,
                 "task_id": task.id,
@@ -443,21 +440,19 @@ Task ID: {task_id}
                 "file_path": task.file_path,
                 "description": task.description,
                 "context": context,
-            }, config={"callbacks": [token_counter]})
+            })
             
             # 토큰 사용량 저장
-            token_usage = token_counter.get_token_usage(f"Coder Agent - {task.file_name}")
+            token_usage = extract_token_usage(result, f"Coder Agent - {task.file_name}")
             token_usage_list.append(token_usage)
             
             code_content = result.content.strip()
             
-            # 코드 블록 제거 (혹시 모를 경우)
+            # 코드 블록 제거
             if code_content.startswith("```"):
                 lines = code_content.split("\n")
                 code_content = "\n".join(lines[1:-1])
             
-            # --- 경로 수정 ---
-            # state에 저장된 프로젝트 경로를 사용
             project_dir = Path(state["project_dir"])
             full_path = project_dir / task.file_path / task.file_name
             full_path.parent.mkdir(parents=True, exist_ok=True)
