@@ -3,9 +3,10 @@
 """
 
 from langgraph.graph import StateGraph, START, END
-from schemas import MultiAgentState
+from .schemas import MultiAgentState
 import uuid
-from agents import (
+from .agents import (
+    setup_project,
     analyst_agent,
     planner_agent,
     coder_agent,
@@ -47,25 +48,19 @@ def create_workflow():
     
     workflow = StateGraph(MultiAgentState)
     
-    # 노드 추가
+    workflow.add_node("setup_project", setup_project)
     workflow.add_node("analyst", analyst_agent)
     workflow.add_node("planner", planner_agent)
     workflow.add_node("coder", coder_agent)
     workflow.add_node("verifier", verifier_agent)
     
-    # 시작 엣지
-    workflow.add_edge(START, "analyst")
-    
-    # Analyst → Planner
+    workflow.add_edge(START, "setup_project")
+    # workflow.add_edge("setup_project", END)
+    workflow.add_edge("setup_project", "analyst")
     workflow.add_edge("analyst", "planner")
-    
-    # Planner → Coder
     workflow.add_edge("planner", "coder")
-    
-    # Coder → Verifier
     workflow.add_edge("coder", "verifier")
-    
-    # Verifier → 조건부 분기
+
     workflow.add_conditional_edges(
         "verifier",
         should_continue,
@@ -99,14 +94,16 @@ def run_multi_agent_system(user_request: str):
     
     # 초기 상태
     initial_state = {
-        "project_uuid": str(uuid.uuid4()),
+        "project_uuid": None,
         "user_request": user_request,
+        "analyzed_user_request": None,
         "current_status": "analyzing",
         "current_epic_index": 0,
         "completed_epics": [],
         "retry_count": 0,
         "max_retries": 3,
-        "all_generated_files": []
+        "all_generated_files": [],
+        "token_usage_list": []
     }
     
     # 실행
@@ -135,6 +132,35 @@ def run_multi_agent_system(user_request: str):
     print(f"\n생성된 파일 ({len(success_files)}개):")
     for file in success_files:
         print(f"  📄 {file.file_path}")
+    
+    # 토큰 사용량 출력
+    token_usage_list = final_state.get("token_usage_list", [])
+    if token_usage_list:
+        print("\n" + "="*80)
+        print("📊 토큰 사용량 상세")
+        print("="*80)
+        
+        total_input = 0
+        total_output = 0
+        total_tokens = 0
+        
+        for usage in token_usage_list:
+            print(f"\n{usage.step_name}:")
+            print(f"  입력 토큰: {usage.input_tokens:,}")
+            print(f"  출력 토큰: {usage.output_tokens:,}")
+            print(f"  총 토큰: {usage.total_tokens:,}")
+            
+            total_input += usage.input_tokens
+            total_output += usage.output_tokens
+            total_tokens += usage.total_tokens
+        
+        print("\n" + "="*80)
+        print("📊 총 토큰 사용량")
+        print("="*80)
+        print(f"총 입력 토큰: {total_input:,}")
+        print(f"총 출력 토큰: {total_output:,}")
+        print(f"전체 총 토큰: {total_tokens:,}")
+        print("="*80)
     
     return final_state
 

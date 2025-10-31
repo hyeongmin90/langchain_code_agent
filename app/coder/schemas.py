@@ -14,6 +14,7 @@ class Epic(BaseModel):
 
 class EpicList(BaseModel):
     """에픽 리스트"""
+    project_name: str = Field(description="프로젝트 이름 (예: TodoList)")
     epics: List[Epic] = Field(description="에픽 목록")
 
 # ============================================
@@ -76,13 +77,22 @@ class VerificationResult(BaseModel):
 # Agent State
 # ============================================
 
+class TokenUsage(BaseModel):
+    """토큰 사용량"""
+    step_name: str = Field(description="단계 이름")
+    input_tokens: int = Field(description="입력 토큰 수")
+    output_tokens: int = Field(description="출력 토큰 수")
+    total_tokens: int = Field(description="총 토큰 수")
+
 class MultiAgentState(TypedDict):
     """멀티 에이전트 시스템 전체 상태"""
 
     project_uuid: str
+
+    project_dir: str
     # 입력
     user_request: str
-    
+    analyzed_user_request: str
     # Analyst Agent 산출물
     epic_list: Optional[EpicList]
     current_epic_index: int  # 현재 처리중인 에픽 인덱스
@@ -107,4 +117,7 @@ class MultiAgentState(TypedDict):
     # 최종 결과
     all_generated_files: List[GeneratedFile]  # 전체 생성된 파일 목록
     final_message: Optional[str]
+    
+    # 토큰 사용량 추적
+    token_usage_list: List[TokenUsage]  # 단계별 토큰 사용량
 

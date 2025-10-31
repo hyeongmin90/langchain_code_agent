@@ -10,7 +10,7 @@
 
 import os
 from dotenv import load_dotenv
-from workflow import run_multi_agent_system
+from .workflow import run_multi_agent_system
 
 
 def main():
@@ -54,6 +54,7 @@ def main():
             
             # 직렬화 가능한 형태로 변환
             result_data = {
+                "project_uuid": final_state.get("project_uuid"),
                 "user_request": final_state.get("user_request"),
                 "status": final_state.get("current_status"),
                 "completed_epics": final_state.get("completed_epics", []),
