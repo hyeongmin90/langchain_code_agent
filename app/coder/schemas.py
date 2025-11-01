@@ -47,6 +47,12 @@ class TaskList(BaseModel):
     epic_id: str = Field(description="이 Task List가 속한 Epic ID")
     tasks: List[Task] = Field(description="작업 목록")
 
+
+class CompletedTask(BaseModel):
+    """이미 작업한(완료된) Task들"""
+    file_name: str = Field(description="파일명")
+    file_path: str = Field(description="파일 경로")
+
 # ============================================
 # 코드 생성 결과
 # ============================================
@@ -119,6 +125,9 @@ class MultiAgentState(TypedDict):
     
     # Verifier Agent 산출물
     current_verification: Optional[VerificationResult]
+
+    # Completed Task List
+    completed_task_list: Optional[List[CompletedTask]]
     
     # 전체 진행 상태
     completed_epics: List[str]  # 완료된 에픽 ID 목록

@@ -119,6 +119,7 @@ def run_multi_agent_system(user_request: str):
         "current_status": "analyzing",
         "current_epic_index": 0,
         "completed_epics": [],
+        "completed_task_list": [],
         "retry_count": 0,
         "max_retries": 1,
         "all_generated_files": [],

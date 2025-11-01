@@ -17,6 +17,7 @@ from .schemas import (
     VerificationResult,
     TokenUsage,
     ProjectSetup,
+    CompletedTask,
 )
 
 def create_file(task_id: str, file_path: Path, file_name: str, content: str) -> GeneratedFile:
@@ -66,7 +67,7 @@ def create_file(task_id: str, file_path: Path, file_name: str, content: str) -> 
 
 def get_llm(model: str = "gemini-2.5-pro"):
     # return ChatGoogleGenerativeAI(model=model)
-    return ChatOpenAI(model="gpt-4o-mini")
+    return ChatOpenAI(model="gpt-5-mini")
 
 
 def extract_token_usage(result, step_name: str) -> TokenUsage:
@@ -140,6 +141,7 @@ def analyze_user_request(state: MultiAgentState) -> str:
 
 ### 출력 형식:
 사용자의 요청을 최우선으로 반영하라.
+요청을 구현하기 위한 최소한의 요구사항만 작성하라. 에러처리, 로깅등의 기능은 최소한으로 작성하라.
 추가적인 의견이나 설명은 작성하지 말고, 분석된 요구사항만 작성하라.
 사람이 아닌 LLM이 읽는것으로 가정하여 작성하라.
 토큰 사용량을 최소화 하기 위해 필요없는 내용은 제거하며, 필요한 내용을 압축하여 작성하라.
@@ -239,7 +241,7 @@ public class {project_name}Application {{
     }]
     
     for config in file_configs:
-        build_gradle_kts = create_file(config["id"], config["path"] / config["name"], config["name"], config["content"])
+        generated_file = create_file(config["id"], config["path"] / config["name"], config["name"], config["content"])
         generated_files.append(generated_file)
         
     return generated_files
@@ -372,14 +374,14 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
     print("="*80)
     
     user_request = state["analyzed_user_request"]
-    print(f"사용자 요청: {user_request}\n")
     
-    llm = get_llm()
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     
     system_prompt = """
 당신은 소프트웨어 프로젝트의 **전략가**입니다.
 
 사용자의 1차 분석된 요청을 받아, **간결한 '에픽(Epic) 목록'**으로 분해하는 것이 당신의 임무입니다.
+에픽은 자바 백엔드 프로젝트에 맞게 생성하라.
 
 ### 에픽이란?
 - 큰 기능 단위 (도메인 단위)
@@ -389,10 +391,11 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
 1. 사용자 요청을 도메인별로 분해합니다
 2. 각 에픽은 **독립적으로 구현 가능**해야 합니다
 3. 우선순위를 명확히 정합니다 (낮을수록 먼저 구현)
-4. 에픽간의 중복이 존재해서는 안됩니다. 연관성이 있는 에픽은 하나의 에픽으로 처리합니다.
-   올바른 예시: "User Domain (Auth)", "Post Domain (Core)", "Comment Domain (Sub)"
-   잘못된 예시: "User Domain (Post)", "User Domain (Delete)", "User Domain (Update)"
-
+4. 에픽간의 중복이 존재해서는 안됩니다. 연관성이 있는 에픽은 하나의 에픽으로 처리합니다. 도메인명은 중복되어선 안된다.
+   올바른 예시: "User Domain (Auth)", "Post Domain (Core)"
+   잘못된 예시: "Post Domain (Core), "comment Domain (sub)" -> 올바른 예시: Post(Core) (밀접한 관련성으로 하나의 Epic으로 처리)
+5. 각각의 에픽은 모두 각기 다른 에이전트가 담당하며 소통하지 않기 때문에 에픽간의 경계를 명확히 구분하여 중복 작업을 피하게하라.
+   예시: Auth, User, Validation -> 서로 중복되는 코드를 작성할수 있음
 
 ### 출력 형식:
 - 주어진 Pydantic 모델 형식으로 출력합니다
@@ -494,9 +497,8 @@ Epic 추가 혹은 제거
 ## 중요 원칙
 
 1. **보수적으로 판단**: 확실하지 않으면 원본 유지
-2. **Project Setup 최우선**: 이 Epic이 완벽하지 않으면 반드시 수정
-3. **일관성 유지**: Epic 스타일과 형식 통일
-4. **구체성 강화**: 모호한 설명은 구체적으로 개선
+2. **일관성 유지**: Epic 스타일과 형식 통일
+3. **구체성 강화**: 모호한 설명은 구체적으로 개선
 
 당신의 검토로 프로젝트의 품질이 결정됩니다. 신중하고 철저하게!
     """
@@ -557,12 +559,15 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
     print(f"현재 Epic: [{current_epic.id}] {current_epic.title}")
     print(f"설명: {current_epic.description}\n")
     
-    llm = get_llm()
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro")
     
     system_prompt = """
 당신은 소프트웨어 프로젝트의 **설계자**입니다.
 
 주어진 에픽(Epic) 1개를 받아, 이를 구현하는 데 필요한 **상세 작업 목록(Task List)**을 생성하는 것이 당신의 임무입니다.
+또한 다음은 이전 작업에서 완료된 Task들의 파일명과 경로이며 이를 제외하고 의존성에 활용하라.
+
+이미 작업된 Task들의 파일명 리스트: {completed_task_list}
 
 ### Task란?
 - **파일 1개 = Task 1개**
@@ -573,6 +578,7 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 2. Spring Boot 베스트 프랙티스를 따릅니다
 3. 파일 간 의존성을 명확히 합니다
 4. 구현 순서를 고려합니다 (Entity → Repository → DTO → Service → Controller)
+5. 최소한의 파일만 생성하라. 필요한 파일만 생성하라.
 
 ### 규칙:
 1. Gradle-kotlin을 사용합니다
@@ -583,13 +589,12 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 2. 보안, 설정, 유틸리티 파일등의 공통 파일은 common/(폴더명) 폴더에 위치한다.
     - 폴더명은 다음으로 제한됩니다. config, exception, utils
 3. 도메인별 파일은 domain 폴더에 위치한다.
-4. 비슷한 종류의 파일(Dto, Service 등)이 2개 이상 존재할 경우 /도메인명/분류명 폴더에 위치한다.
+4. 비슷한 종류의 파일(Dto, Service 등)이 2개 이상 존재할 경우 폴더로 구분하라. ex) user/dto/*.dto.java
 
 파일 구조 예시:
 src/main/java/com/example/{project_name}/common/config/SecurityConfig.java
 src/main/java/com/example/{project_name}/domain/user/User.java
 src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
-
 
 출력 예시:
 주어진 Pydantic 모델 형식으로 출력합니다
@@ -613,7 +618,11 @@ Epic 설명: {epic_description}
     ])
     
     chain = prompt | llm.with_structured_output(TaskList, include_raw=True)
+    
+    completed_task_list = state.get("completed_task_list", [])
+    
     response = chain.invoke({
+        "completed_task_list": completed_task_list,
         "project_name": state["project_name"],
         "epic_id": current_epic.id,
         "epic_title": current_epic.title,
@@ -626,7 +635,7 @@ Epic 설명: {epic_description}
     token_usage_list = state.get("token_usage_list", [])
     token_usage = extract_token_usage(raw_message, f"Planner Agent (Epic: {current_epic.id})")
     token_usage_list.append(token_usage)
-    
+
     print(f"✅ 생성된 Task 목록 ({len(result.tasks)}개):")
     for task in result.tasks:
         deps = f" (의존: {', '.join(task.dependencies)})" if task.dependencies else ""
@@ -695,8 +704,6 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
                 for dep in dep_files:
                     context += f"\n// {dep.file_name}\n{dep.code_content[:500]}...\n"
         
-
-
         prompt = ChatPromptTemplate([
             ("system", system_prompt),
             ("human", """
@@ -711,7 +718,6 @@ Task ID: {task_id}
         ])
         
         chain = prompt | llm
-        sleep(5)
         
         result = chain.invoke({
             "project_name": project_name,
@@ -792,8 +798,8 @@ def verifier_agent(state: MultiAgentState) -> Dict[str, Any]:
     # )
     
     # 시뮬레이션: 모든 파일이 성공적으로 생성되었는지 확인
-    failed_files = [f for f in code_result.generated_files if f.status == "failed"]
-    
+    failed_files = [f for f in code_result.generated_files if f.status == "failed"]    
+
     if failed_files:
         # 실패한 경우
         verification = VerificationResult(
@@ -810,7 +816,7 @@ def verifier_agent(state: MultiAgentState) -> Dict[str, Any]:
         
         # 재시도 로직
         retry_count = state.get("retry_count", 0)
-        max_retries = state.get("max_retries", 3)
+        max_retries = state.get("max_retries", 1)
         
         if retry_count < max_retries:
             print(f"\n🔄 재시도 {retry_count + 1}/{max_retries}")
@@ -827,7 +833,14 @@ def verifier_agent(state: MultiAgentState) -> Dict[str, Any]:
                 "current_epic_index": current_index + 1,
                 "retry_count": 0
             }
-    
+
+    completed_task_list = state.get("completed_task_list", [])
+
+    for generated_file in code_result.generated_files:
+        completed_task_list.append(CompletedTask(
+            file_name=generated_file.file_name,
+            file_path=generated_file.file_path
+        ))
     # 성공한 경우
     verification = VerificationResult(
         epic_id=current_epic.id,
@@ -859,6 +872,7 @@ def verifier_agent(state: MultiAgentState) -> Dict[str, Any]:
             "current_status": "planning",
             "current_epic_index": next_index,
             "completed_epics": completed_epics,
+            "completed_task_list": completed_task_list,
             "retry_count": 0
         }
 
