@@ -14,8 +14,18 @@ class Epic(BaseModel):
 
 class EpicList(BaseModel):
     """에픽 리스트"""
-    project_name: str = Field(description="프로젝트 이름 (예: TodoList)")
     epics: List[Epic] = Field(description="에픽 목록")
+
+
+# ============================================
+# 프로젝트 설정 관련 스키마
+# ============================================
+
+class ProjectSetup(BaseModel):
+    """프로젝트 설정"""
+    project_name: str = Field(description="프로젝트 이름 (예: TodoList)")
+    build_gradle_kts: str = Field(description="build.gradle.kts 파일 전체 내용")
+    application_yml: str = Field(description="application.yml 파일 전체 내용")
 
 # ============================================
 # Task 관련 스키마
@@ -86,17 +96,23 @@ class TokenUsage(BaseModel):
 
 class MultiAgentState(TypedDict):
     """멀티 에이전트 시스템 전체 상태"""
-
+    
     project_uuid: str
 
     project_dir: str
     # 입력
     user_request: str
+
     analyzed_user_request: str
+
+    project_setup_files: Optional[List[GeneratedFile]]
+    project_setup_status: Literal["success", "failed"]
+    
     # Analyst Agent 산출물
     epic_list: Optional[EpicList]
+
     current_epic_index: int  # 현재 처리중인 에픽 인덱스
-    
+
     # Planner Agent 산출물
     current_task_list: Optional[TaskList]
     
@@ -108,7 +124,7 @@ class MultiAgentState(TypedDict):
     
     # 전체 진행 상태
     completed_epics: List[str]  # 완료된 에픽 ID 목록
-    current_status: Literal["analyzing", "planning", "coding", "verifying", "completed", "failed"]
+    current_status: Literal["analyzing", "setup_project", "planning", "coding", "verifying", "completed", "failed"]
     
     # 재시도 관련
     retry_count: int  # 현재 에픽 재시도 횟수

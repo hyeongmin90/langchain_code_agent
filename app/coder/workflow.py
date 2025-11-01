@@ -11,7 +11,8 @@ from .agents import (
     planner_agent,
     coder_agent,
     verifier_agent,
-    analyze_user_request
+    analyze_user_request,
+    feedback_epic_list
 )
 
 def should_continue(state: MultiAgentState) -> str:
@@ -35,6 +36,9 @@ def should_continue(state: MultiAgentState) -> str:
     else:
         return END
 
+def project_setup_status(state: MultiAgentState) -> str:
+    return state["project_setup_status"]
+
 def create_workflow():
     """
     멀티 에이전트 워크플로우를 생성합니다.
@@ -49,17 +53,29 @@ def create_workflow():
     
     workflow = StateGraph(MultiAgentState)
     
+    # 노드 
     workflow.add_node("analyze_user_request", analyze_user_request)
     workflow.add_node("setup_project", setup_project)
+    workflow.add_node("verify_project_setup", verify_project_setup)
     workflow.add_node("analyst", analyst_agent)
+    workflow.add_node("feedback_epic_list", feedback_epic_list)
     workflow.add_node("planner", planner_agent)
     workflow.add_node("coder", coder_agent)
     workflow.add_node("verifier", verifier_agent)
     
+    # 엣지
     workflow.add_edge(START, "analyze_user_request")
     workflow.add_edge("analyze_user_request", "setup_project")
-    workflow.add_edge("setup_project", "analyst")
-    workflow.add_edge("analyst", "planner")
+    workflow.add_edge("setup_project", "verify_project_setup")
+    workflow.add_edge("verify_project_setup", "analyst")
+
+    workflow.add_conditional_edges("verify_project_setup", project_setup_status, {
+        "success": "analyst",
+        "failed": "setup_project"
+    })
+
+    workflow.add_edge("analyst", "feedback_epic_list")
+    workflow.add_edge("feedback_epic_list", "planner")
     workflow.add_edge("planner", "coder")
     workflow.add_edge("coder", "verifier")
 

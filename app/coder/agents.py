@@ -10,9 +10,11 @@ import os
 import uuid
 import shutil
 import zipfile
+from time import sleep
 from pathlib import Path
 from typing import Dict, Any, List
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from .schemas import (
     MultiAgentState,
@@ -22,11 +24,43 @@ from .schemas import (
     CodeGenerationResult,
     VerificationResult,
     TokenUsage,
+    ProjectSetupFiles,
 )
 
+def create_file(file_path: str, content: str):
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        generated_file = GeneratedFile(
+            task_id=task.id,
+            file_name=task.file_name,
+            file_path=str(full_path),
+            code_content=code_content,
+            status="success"
+        )
+            
+        generated_files.append(generated_file)
+        print(f"  ✅ 성공: {file_path}")
+            
+    except Exception as e:
+        print(f"  ❌ 실패: {file_path} - {str(e)}")
+        generated_file = GeneratedFile(
+            task_id=file_path,
+            file_name=file_path,
+            file_path=file_path,
+            code_content="",
+            status="failed",
+            error_message=str(e)
+        )
+        generated_files.append(generated_file)
+    finally:
+        return generated_file
 
 def get_llm(model: str = "gemini-2.5-pro"):
-    return ChatGoogleGenerativeAI(model=model)
+    # return ChatGoogleGenerativeAI(model=model)
+    return ChatOpenAI(model="gpt-4o-mini")
 
 
 def extract_token_usage(result, step_name: str) -> TokenUsage:
@@ -98,18 +132,15 @@ def analyze_user_request(state: MultiAgentState) -> str:
    - 인증/인가, 예외 처리, 데이터 검증 등
    - 프로젝트 규모에 맞게 선택적으로 포함
 
-4. **주요 엔티티와 관계를 정의**하세요
-   - 핵심 엔티티의 속성과 관계(1:N, N:M)를 명시
-
-### 기술 환경:
-- Spring Boot, Gradle-Kotlin, H2 Database, JPA
-
 ### 출력 형식:
+추가적인 의견이나 설명은 작성하지 말고, 분석된 요구사항만 작성하라.
+또한 사람이 아닌 LLM이 읽을 수 있도록 작성하라.
+토큰 사용량을 최소화 하기 위해 필요없는 내용은 제거하며, 필요한 내용을 압축하여 작성하라.
+`
 자유롭게 작성하되, 다음 항목을 포함하세요:
 - 프로젝트 개요 및 주요 기능
-- 도메인 모델 (엔티티 및 관계)
 - 기능 요구사항 (도메인별)
-- 필요시 API 엔드포인트 및 공통 기능
+- 필요시 간단한 API 엔드포인트 및 공통 기능 예시
 
 **중요**: 프로젝트 규모와 복잡도에 맞게 적절히 판단하여 작성하세요.
 """
@@ -133,15 +164,87 @@ def analyze_user_request(state: MultiAgentState) -> str:
 # 1. Setup Project (프로젝트 설정)
 # ============================================
 
+def save_initial_setup_files(
+    project_name: str,
+    dest_dir: Path,
+    build_gradle_content: str,
+    application_yml_content: str
+):
+    """
+    초기 설정 파일 4개를 생성하고 저장합니다.
+    
+    Args:
+        project_name: 프로젝트 이름 (예: TodoList)
+        dest_dir: 프로젝트 루트 디렉토리
+        build_gradle_content: build.gradle.kts 파일 내용
+        application_yml_content: application.yml 파일 내용
+    
+    Returns:
+        생성된 파일 목록
+    """
+    print("\n[파일 생성] 초기 설정 파일 생성 중...")
+    
+    lower_project_name = project_name.lower()
+    generated_files = []
+    
+    settings_gradle_content = f'rootProject.name = "{lower_project_name}"\n'
+    application_java_content = f"""package com.example.{lower_project_name};
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class {project_name}Application {{
+
+    public static void main(String[] args) {{
+        SpringApplication.run({project_name}Application.class, args);
+    }}
+}}
+"""
+        
+        # 2. 파일 설정
+    file_configs = [
+        {
+            "name": "build.gradle.kts",
+            "path": dest_dir,
+            "content": build_gradle_content
+        },
+        {
+            "name": "settings.gradle.kts",
+            "path": dest_dir,
+            "content": settings_gradle_content
+        },
+        {
+            "name": "application.yml",
+            "path": dest_dir / "src" / "main" / "resources",
+            "content": application_yml_content
+        },
+        {
+            "name": f"{project_name}Application.java",
+            "path": dest_dir / "src" / "main" / "java" / "com" / "example" / lower_project_name,
+            "content": application_java_content
+        }
+    ]
+    
+    for config in file_configs:
+        generated_file = create_file(config["path"] / config["name"], config["content"])
+        generated_files.append(generated_file)
+        
+    
+    return generated_files
+
 def setup_project(state: MultiAgentState) -> Dict[str, Any]:
     """
-    프로젝트 설정
+    프로젝트 설정 및 초기 파일 생성
+    - 프로젝트 디렉토리 생성
+    - 프로젝트 이름 및 의존성 결정
+    - 초기 설정 파일 생성 (build.gradle.kts, settings.gradle.kts, application.yml, Application.java)
     """
     print("\n" + "="*80)
-    print("🔧 [Setup Project] 프로젝트 설정 시작")
+    print("🔧 [Setup Project] 프로젝트 설정 및 초기 파일 생성 시작")
     print("="*80)
-
     
+    # 프로젝트 디렉토리 생성
     project_uuid = str(uuid.uuid4())
     zip_src = Path(__file__).parent.parent / "springTemplate" / "demo.zip"    
     project_dir = Path(__file__).parent.parent.parent
@@ -150,10 +253,99 @@ def setup_project(state: MultiAgentState) -> Dict[str, Any]:
 
     with zipfile.ZipFile(zip_src, "r") as zip_ref:
         zip_ref.extractall(dest_dir)
+    
+    llm = get_llm()
+    token_usage_list = state.get("token_usage_list", [])
+    generated_files = []
+    
+    # 1단계: 프로젝트 이름과 의존성 결정
+    print("\n[1단계] 프로젝트 이름 및 의존성 결정...")
+    system_prompt = """
+    당신은 소프트웨어 프로젝트의 **프로젝트 설정 전문가**입니다.
+    사용자의 요청을 바탕으로 프로젝트의 이름을 결정하고, 필요한 설정 파일을 생성해야 합니다.
+    
+    프로젝트 이름 작성 규칙:
+    - 길고 복잡한 이름 대신, 간단명료하게 단어 위주로 작성합니다.
+    - "SimpleTodolist" 처럼 형용사 등을 붙이기보단, 핵심 도메인만 사용 (예: Todolist, Blog 등).
+    - 불필요한 접두어/접미어/형용사는 제외합니다.
+    - 영어 단어만 사용하고, 공백 없이 카멜표기법으로 작성합니다.
+    - 너무 축약/생략하지 마시고, 사용자의 요구가 드러나는 명사를 충실하게 씁니다.
 
+    ### 파일 1: build.gradle.kts
+    - Kotlin DSL 문법 사용
+    - Spring Boot 3.x 버전 사용
+    - Java 17 사용
+    - 기본 의존성: Spring Web, Spring Data JPA, H2 Database, Lombok, Spring Boot Starter Test
+    - 추가로 필요한 의존성도 모두 포함
+
+    ### 파일 2: application.yml
+    - 서버 포트 8080
+    - H2 데이터베이스 설정 (콘솔 활성화, 인메모리 DB)
+    - JPA 설정 (hibernate ddl-auto: create-drop, show-sql: true)
+    - 로깅 레벨 설정
+    - 이외 필요한 설정도 모두 포함하라.
+
+    ### 중요:
+    - 각 파일의 **순수한 코드만** 출력하세요 (설명, 마크다운 코드 블록 사용 금지)
+    - 주석은 필요한 경우에만 최소한으로 작성
+
+    ### 출력 형식:
+    출력 형식은 주어진 Pydantic 모델 형식으로 출력합니다.
+    """
+
+    prompt = ChatPromptTemplate([
+        ("system", system_prompt),
+        ("human", "사용자 요청: {user_request}")
+    ])
+    chain = prompt | llm.with_structured_output(ProjectSetup, include_raw=True) 
+
+    response = chain.invoke({
+        "user_request": state["analyzed_user_request"]
+    })
+
+    project_setup = response["parsed"]
+    raw_message = response["raw"]
+
+    token_usage = extract_token_usage(raw_message, "Setup Project - 기본 설정")
+    token_usage_list.append(token_usage)
+    
+    project_name = project_setup.project_name
+    
+    # 파일 생성
+    generated_files = save_initial_setup_files(
+        project_name=project_name,
+        dest_dir=dest_dir,
+        build_gradle_content=project_setup.build_gradle_kts,
+        application_yml_content=project_setup.application_yml
+    )
+    
     return {
         "project_uuid": project_uuid,
         "project_dir": str(dest_dir),
+        "project_name": project_name.lower(),
+        "project_setup_files": generated_files,
+        "token_usage_list": token_usage_list
+    }
+
+def verify_project_setup(state: MultiAgentState) -> Dict[str, Any]:
+    """
+    프로젝트 설정을 검증합니다.
+    """
+    print("\n" + "="*80)
+    print("🔍 [Verify Project Setup] 프로젝트 설정 검증 시작")
+    print("="*80)
+    
+    setup_files = state["project_setup_files"]
+
+    for setup_file in setup_files:
+        if setup_file.status == "failed":
+            print(f"❌ 프로젝트 설정 생성 실패: {setup_file.file_name} - {setup_file.error_message}")
+            return {
+                "project_setup_status": "failed"
+            }
+
+    return {
+        "project_setup_status": "success"
     }
 
 # ============================================
@@ -179,7 +371,6 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
 당신은 소프트웨어 프로젝트의 **전략가**입니다.
 
 사용자의 1차 분석된 요청을 받아, **간결한 '에픽(Epic) 목록'**으로 분해하는 것이 당신의 임무입니다.
-또한 프로젝트의 이름을 정하는 것도 당신의 임무입니다. 프로젝트 이름은 영어로 정합니다.
 
 ### 에픽이란?
 - 큰 기능 단위 (도메인 단위)
@@ -189,10 +380,10 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
 1. 사용자 요청을 도메인별로 분해합니다
 2. 각 에픽은 **독립적으로 구현 가능**해야 합니다
 3. 우선순위를 명확히 정합니다 (낮을수록 먼저 구현)
-4. 첫 번째 에픽은 항상 "Project Setup"이어야 하며, 설명에는 다음이 포함되어야 합니다.
-- Project Setup은 build.gradle.kts, settings.gradle.kts, application.yml, *.Application.java 파일만 생성합니다.
-- 필요한 의존성을 모두 적어야하며, 누락되서는 안된다.
-- build.gradle.kts, settings.gradle.kts 파일은 Root 경로에 위치합니다.
+4. 에픽간의 중복이 존재해서는 안됩니다. 연관성이 있는 에픽은 하나의 에픽으로 처리합니다.
+   올바른 예시: "User Domain (Auth)", "Post Domain (Core)", "Comment Domain (Sub)"
+   잘못된 예시: "User Domain (Post)", "User Domain (Delete)", "User Domain (Update)"
+
 
 ### 출력 형식:
 - 주어진 Pydantic 모델 형식으로 출력합니다
@@ -229,6 +420,119 @@ def analyst_agent(state: MultiAgentState) -> Dict[str, Any]:
         "retry_count": 0,
         "max_retries": 3,
         "all_generated_files": [],
+        "token_usage_list": token_usage_list
+    }
+
+def feedback_epic_list(state: MultiAgentState):
+    """
+    에픽 목록을 피드백 받습니다.
+    """
+    print("\n" + "="*80)
+    print("🔍 [Feedback Epic List] 에픽 목록 피드백 시작")
+    print("="*80)
+    
+    epic_list = state["epic_list"]
+    token_usage_list = state.get("token_usage_list", [])
+    user_request = state["analyzed_user_request"]
+
+    llm = get_llm()
+    system_prompt = """
+당신은 소프트웨어 프로젝트의 **품질 관리자(QA Specialist)**입니다.
+
+Analyst가 생성한 Epic List를 **검토하고 개선**하는 것이 당신의 임무입니다.
+
+## 주요 임무
+
+### 1. Project Setup Epic 검증 (최우선)
+- 첫 번째 Epic이 "Project Setup"인지 확인
+- Epic ID는 "epic-1", title은 정확히 "Project Setup"
+- priority는 1 (가장 높은 우선순위)
+- description에 다음 내용이 **구체적으로** 포함되어 있는지 확인:
+  
+  ✅ 필수 체크리스트:
+  - 생성할 파일 4개 명시 (build.gradle.kts, settings.gradle.kts, application.yml, Application.java)
+  - 각 파일의 정확한 경로 명시
+  - build.gradle.kts에 필요한 모든 의존성 나열 (Spring Boot, JPA, H2, Lombok, Security 등)
+  - application.yml 설정 항목 명시 (H2, JPA, port, logging)
+  - 패키지명 규칙 명시
+  
+  ⚠️ 누락 시: description을 보강하여 위 내용 모두 포함시킬 것
+
+### 2. Epic 중복 검사
+- 같은 도메인이 여러 Epic으로 분리되어 있는지 확인
+- 예: "User 회원가입", "User 로그인" → "User Domain (Auth)" 하나로 통합
+- 중복 발견 시: Epic을 병합하고 description을 통합
+
+### 3. Epic 누락 검사
+사용자 요청을 다시 확인하여 빠진 기능이 없는지 체크:
+- 명시된 기능이 Epic으로 변환되었는가?
+- 암시된 기능이 포함되었는가? (예: 게시판 → CRUD, 페이징, 검색)
+- 공통 기능이 필요한가? (예: 예외 처리, 공통 응답 포맷 등)
+
+누락 발견 시: 새로운 Epic 추가
+
+### 4. Epic 설명 품질 검사
+각 Epic의 description이 다음을 포함하는지 확인:
+- 구체적인 기능 목록
+- 입력/출력 데이터 형식
+- 필요한 엔티티 목록
+- API 엔드포인트 예시 (있는 경우)
+- 비즈니스 규칙 (있는 경우)
+
+품질 부족 시: description을 구체적으로 보강 
+
+### 5. Epic 간 의존성 확인
+- 선행 Epic 없이 구현 불가능한 Epic이 있는지 확인
+- 예: Comment Epic은 Post Epic 이후에 와야 함
+- 의존성 순서대로 priority 재배치
+
+## 출력 규칙
+
+### 수정이 필요한 경우:
+- 개선된 Epic List를 반환
+- project_name은 원본 유지
+
+### 수정이 불필요한 경우:
+- 원본 Epic List를 그대로 반환
+
+## 중요 원칙
+
+1. **보수적으로 판단**: 확실하지 않으면 원본 유지
+2. **Project Setup 최우선**: 이 Epic이 완벽하지 않으면 반드시 수정
+3. **일관성 유지**: Epic 스타일과 형식 통일
+4. **구체성 강화**: 모호한 설명은 구체적으로 개선
+
+당신의 검토로 프로젝트의 품질이 결정됩니다. 신중하고 철저하게!
+    """
+    human_prompt = """
+    사용자 요청: {user_request}
+    주어진 에픽 목록: {epic_list}
+    """
+
+    prompt = ChatPromptTemplate([
+        ("system", system_prompt),
+        ("human", human_prompt)
+    ])
+    
+    chain = prompt | llm.with_structured_output(EpicList, include_raw=True)
+
+    response = chain.invoke({
+        "user_request": user_request,
+        "epic_list": epic_list
+    })
+
+    result = response["parsed"]
+    raw_message = response["raw"]
+
+    token_usage = extract_token_usage(raw_message, "Feedback Epic List")
+    token_usage_list.append(token_usage)
+
+    print(f"✅ 수정된 Epic 목록 ({len(result.epics)}개):")
+    for epic in result.epics:
+        print(f"  - [{epic.id}] {epic.title} (우선순위: {epic.priority})")
+
+    return {
+        "epic_list": result,
         "token_usage_list": token_usage_list
     }
 
@@ -273,25 +577,28 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 2. Spring Boot 베스트 프랙티스를 따릅니다
 3. 파일 간 의존성을 명확히 합니다
 4. 구현 순서를 고려합니다 (Entity → Repository → DTO → Service → Controller)
-5. 에픽간의 중복이 존재해서는 안됩니다.
 
 ### 규칙:
 1. DB는 H2 Database를 사용합니다
 2. Gradle-kotlin을 사용합니다
-3. 파일경로를 지정하지 않으면 프로젝트 root 경로에 위치합니다.
-4. epic명이 Project Setup이 아닐 경우엔 설정파일(application.yml, build.gradle.kts, *.Application.java)을 제외한다.
+3. epic명이 Project Setup이 아닐 경우엔 설정파일(application.yml, build.gradle.kts, *.Application.java)을 제외한다..
+4. Project Setup의 경우 필요한 파일의 경로는 다음과 같아야한다.
+    - build.gradle.kts, settings.gradle.kts 프로젝트 root에 위치. (경로를 비워두면 프로젝트 root에 위치.)
+    - application.yml src/main/resources 폴더에 위치.
+    - *.Application.java 파일은 src/main/java/com/example/{project_name} 폴더에 위치.
 
 ### 파일 구조
-설정 파일을 제외한 모든 파일은 src/main/java/com/example/{project_name} 폴더에 위치합니다.
-보안, 설정, 유틸리티 파일등의 공통 파일은 common/(폴더명) 폴더에 위치합니다.
+1. 설정 파일을 제외한 모든 파일의 기본 경로는 src/main/java/com/example/{project_name} 이다.
+2. 보안, 설정, 유틸리티 파일등의 공통 파일은 common/(폴더명) 폴더에 위치한다.
     - 폴더명은 다음으로 제한됩니다. config, exception, utils
-도메인별 파일은 domain 폴더에 위치합니다.
-Dto 파일의 경우 domain/(도메인명)/dto 폴더에 위치합니다.
+3. 도메인별 파일은 domain 폴더에 위치한다.
+4. 비슷한 종류의 파일(Dto, Service 등)이 2개 이상 존재할 경우 /도메인명/분류명 폴더에 위치한다.
 
-ex) src/main/java/com/example/{project_name}/common/config/SecurityConfig.java
-ex) src/main/java/com/example/{project_name}/domain/user/User.java
-ex) src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
-ex) build.gradle.kts
+파일 구조 예시:
+src/main/java/com/example/{project_name}/common/config/SecurityConfig.java
+src/main/java/com/example/{project_name}/domain/user/User.java
+src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
+build.gradle.kts
 
 ### 출력 형식:
 - 주어진 Pydantic 모델 형식으로 출력합니다
@@ -309,7 +616,6 @@ Epic 설명: {epic_description}
 """)
     ])
     
-    # structured output with raw response (토큰 정보 포함)
     chain = prompt | llm.with_structured_output(TaskList, include_raw=True)
     response = chain.invoke({
         "project_name": epic_list.project_name,
@@ -379,7 +685,6 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
 4. Lombok 어노테이션을 적극 활용합니다
 5. JPA, Spring Security 등 필요한 어노테이션을 사용합니다
 
-
 ### 주의사항:
 - 코드 블록(```)을 사용하지 마세요
 - 주석은 필요한 경우에만 간단히 작성하세요
@@ -410,55 +715,31 @@ Task ID: {task_id}
         ])
         
         chain = prompt | llm
+        sleep(5)
         
-        try:
-            result = chain.invoke({
-                "project_name": project_name,
-                "task_id": task.id,
-                "file_name": task.file_name,
-                "file_path": task.file_path,
-                "description": task.description,
-                "context": context,
-            })
-            
-            token_usage = extract_token_usage(result, f"Coder Agent - {task.file_name}")
-            token_usage_list.append(token_usage)
-            
-            code_content = result.content.strip()
-            
-            if code_content.startswith("```"):
-                lines = code_content.split("\n")
-                code_content = "\n".join(lines[1:-1])
-            
-            project_dir = Path(state["project_dir"])
-            full_path = project_dir / task.file_path / task.file_name
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(code_content)
-            
-            generated_file = GeneratedFile(
-                task_id=task.id,
-                file_name=task.file_name,
-                file_path=str(full_path),
-                code_content=code_content,
-                status="success"
-            )
-            
-            generated_files.append(generated_file)
-            print(f"  ✅ 성공: {full_path}")
-            
-        except Exception as e:
-            print(f"  ❌ 실패: {task.file_name} - {str(e)}")
-            generated_file = GeneratedFile(
-                task_id=task.id,
-                file_name=task.file_name,
-                file_path=task.file_path,
-                code_content="",
-                status="failed",
-                error_message=str(e)
-            )
-            generated_files.append(generated_file)
+        result = chain.invoke({
+            "project_name": project_name,
+            "task_id": task.id,
+            "file_name": task.file_name,
+            "file_path": task.file_path,
+            "description": task.description,
+            "context": context,
+        })
+        
+        token_usage = extract_token_usage(result, f"Coder Agent - {task.file_name}")
+        token_usage_list.append(token_usage)
+        
+        code_content = result.content.strip()
+        
+        if code_content.startswith("```"):
+            lines = code_content.split("\n")
+            code_content = "\n".join(lines[1:-1])
+        
+        project_dir = Path(state["project_dir"])
+        full_path = project_dir / task.file_path / task.file_name
+        
+        generated_file = create_file(full_path, code_content)
+        generated_files.append(generated_file)
     
     code_result = CodeGenerationResult(
         epic_id=current_epic.id,
