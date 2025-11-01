@@ -24,39 +24,53 @@ from .schemas import (
     CodeGenerationResult,
     VerificationResult,
     TokenUsage,
-    ProjectSetupFiles,
+    ProjectSetup,
 )
 
-def create_file(file_path: str, content: str):
+def create_file(task_id: str, file_path: Path, file_name: str, content: str) -> GeneratedFile:
+    """
+    파일을 생성하고 GeneratedFile 객체를 반환합니다.
+    
+    Args:
+        task_id: 작업 ID
+        file_path: 전체 파일 경로 (Path 객체)
+        file_name: 파일명
+        content: 파일 내용
+    
+    Returns:
+        GeneratedFile 객체
+    """
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 이스케이프 시퀀스를 실제 문자로 변환 (LLM이 \n을 문자열로 반환하는 경우 대비)
+        # encode().decode('unicode_escape')를 사용하여 \n, \t 등을 실제 문자로 변환
+        if '\\n' in content or '\\t' in content:
+            content = content.encode().decode('unicode_escape')
+        
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-        generated_file = GeneratedFile(
-            task_id=task.id,
-            file_name=task.file_name,
-            file_path=str(full_path),
-            code_content=code_content,
+        print(f"  ✅ 성공: {file_path}")
+        
+        return GeneratedFile(
+            task_id=task_id,
+            file_name=file_name,
+            file_path=str(file_path),
+            code_content=content,
             status="success"
         )
             
-        generated_files.append(generated_file)
-        print(f"  ✅ 성공: {file_path}")
-            
     except Exception as e:
         print(f"  ❌ 실패: {file_path} - {str(e)}")
-        generated_file = GeneratedFile(
-            task_id=file_path,
-            file_name=file_path,
-            file_path=file_path,
+        return GeneratedFile(
+            task_id=task_id,
+            file_name=file_name,
+            file_path=str(file_path),
             code_content="",
             status="failed",
             error_message=str(e)
         )
-        generated_files.append(generated_file)
-    finally:
-        return generated_file
 
 def get_llm(model: str = "gemini-2.5-pro"):
     # return ChatGoogleGenerativeAI(model=model)
@@ -151,6 +165,8 @@ def analyze_user_request(state: MultiAgentState) -> str:
     chain = prompt | llm
     result = chain.invoke({"request": user_request})
 
+    print(result.content)
+
     token_usage = extract_token_usage(result, f"Analyze User Request Agent")
     token_usage_list = state.get("token_usage_list", [])
     token_usage_list.append(token_usage)
@@ -205,21 +221,25 @@ public class {project_name}Application {{
         # 2. 파일 설정
     file_configs = [
         {
+            "id": "setup-1",
             "name": "build.gradle.kts",
             "path": dest_dir,
             "content": build_gradle_content
         },
         {
+            "id": "setup-2",
             "name": "settings.gradle.kts",
             "path": dest_dir,
             "content": settings_gradle_content
         },
         {
+            "id": "setup-3",
             "name": "application.yml",
             "path": dest_dir / "src" / "main" / "resources",
             "content": application_yml_content
         },
         {
+            "id": "setup-4",
             "name": f"{project_name}Application.java",
             "path": dest_dir / "src" / "main" / "java" / "com" / "example" / lower_project_name,
             "content": application_java_content
@@ -227,7 +247,7 @@ public class {project_name}Application {{
     ]
     
     for config in file_configs:
-        generated_file = create_file(config["path"] / config["name"], config["content"])
+        generated_file = create_file(config["id"], config["path"] / config["name"], config["name"], config["content"])
         generated_files.append(generated_file)
         
     
@@ -288,9 +308,11 @@ def setup_project(state: MultiAgentState) -> Dict[str, Any]:
     ### 중요:
     - 각 파일의 **순수한 코드만** 출력하세요 (설명, 마크다운 코드 블록 사용 금지)
     - 주석은 필요한 경우에만 최소한으로 작성
+    - 줄바꿈은 실제 줄바꿈을 사용하세요 (\\n 문자열이 아닌 실제 개행)
 
     ### 출력 형식:
     출력 형식은 주어진 Pydantic 모델 형식으로 출력합니다.
+    파일 내용은 실제 줄바꿈이 포함된 멀티라인 문자열로 작성하세요.
     """
 
     prompt = ChatPromptTemplate([
@@ -326,6 +348,7 @@ def setup_project(state: MultiAgentState) -> Dict[str, Any]:
         "project_setup_files": generated_files,
         "token_usage_list": token_usage_list
     }
+
 
 def verify_project_setup(state: MultiAgentState) -> Dict[str, Any]:
     """
@@ -579,13 +602,8 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 4. 구현 순서를 고려합니다 (Entity → Repository → DTO → Service → Controller)
 
 ### 규칙:
-1. DB는 H2 Database를 사용합니다
-2. Gradle-kotlin을 사용합니다
-3. epic명이 Project Setup이 아닐 경우엔 설정파일(application.yml, build.gradle.kts, *.Application.java)을 제외한다..
-4. Project Setup의 경우 필요한 파일의 경로는 다음과 같아야한다.
-    - build.gradle.kts, settings.gradle.kts 프로젝트 root에 위치. (경로를 비워두면 프로젝트 root에 위치.)
-    - application.yml src/main/resources 폴더에 위치.
-    - *.Application.java 파일은 src/main/java/com/example/{project_name} 폴더에 위치.
+1. Gradle-kotlin을 사용합니다
+2. 설정파일(application.yml, build.gradle.kts, *.Application.java)을 제외한다.
 
 ### 파일 구조
 1. 설정 파일을 제외한 모든 파일의 기본 경로는 src/main/java/com/example/{project_name} 이다.
@@ -598,11 +616,16 @@ def planner_agent(state: MultiAgentState) -> Dict[str, Any]:
 src/main/java/com/example/{project_name}/common/config/SecurityConfig.java
 src/main/java/com/example/{project_name}/domain/user/User.java
 src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
-build.gradle.kts
 
-### 출력 형식:
-- 주어진 Pydantic 모델 형식으로 출력합니다
-- 각 Task는 id, file_name, file_path, description, dependencies를 포함합니다
+
+출력 예시:
+주어진 Pydantic 모델 형식으로 출력합니다
+파일 경로에서 파일명은 제외하고 경로만 출력합니다.
+- id: task-1-1
+- file_path: src/main/java/com/example/{project_name}/domain/user
+- file_name: User.java
+- description: User 엔티티 클래스
+- dependencies: []
 """
     
     prompt = ChatPromptTemplate([
@@ -618,7 +641,7 @@ Epic 설명: {epic_description}
     
     chain = prompt | llm.with_structured_output(TaskList, include_raw=True)
     response = chain.invoke({
-        "project_name": epic_list.project_name,
+        "project_name": state["project_name"],
         "epic_id": current_epic.id,
         "epic_title": current_epic.title,
         "epic_description": current_epic.description
@@ -660,7 +683,7 @@ def coder_agent(state: MultiAgentState) -> Dict[str, Any]:
     epic_list = state["epic_list"]
     current_index = state["current_epic_index"]
     current_epic = epic_list.epics[current_index]
-    project_name = epic_list.project_name
+    project_name = state["project_name"]
     
     print(f"Epic: [{current_epic.id}] {current_epic.title}")
     print(f"생성할 파일 수: {len(task_list.tasks)}\n")
@@ -738,7 +761,7 @@ Task ID: {task_id}
         project_dir = Path(state["project_dir"])
         full_path = project_dir / task.file_path / task.file_name
         
-        generated_file = create_file(full_path, code_content)
+        generated_file = create_file(task.id, full_path, task.file_name, code_content)
         generated_files.append(generated_file)
     
     code_result = CodeGenerationResult(

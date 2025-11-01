@@ -96,14 +96,12 @@ class TokenUsage(BaseModel):
 
 class MultiAgentState(TypedDict):
     """멀티 에이전트 시스템 전체 상태"""
-    
-    project_uuid: str
-
-    project_dir: str
-    # 입력
     user_request: str
-
     analyzed_user_request: str
+
+    project_uuid: str
+    project_dir: str
+    project_name: str
 
     project_setup_files: Optional[List[GeneratedFile]]
     project_setup_status: Literal["success", "failed"]
