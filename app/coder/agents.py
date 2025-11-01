@@ -1,11 +1,3 @@
-"""
-4개의 에이전트 구현:
-1. Analyst Agent - 사용자 요청을 Epic List로 분해
-2. Planner Agent - Epic을 Task List로 분해
-3. Coder Agent - Task List를 파일로 생성
-4. Verifier Agent - 도메인 단위 검증
-"""
-
 import os
 import uuid
 import shutil
@@ -147,10 +139,11 @@ def analyze_user_request(state: MultiAgentState) -> str:
    - 프로젝트 규모에 맞게 선택적으로 포함
 
 ### 출력 형식:
+사용자의 요청을 최우선으로 반영하라.
 추가적인 의견이나 설명은 작성하지 말고, 분석된 요구사항만 작성하라.
-또한 사람이 아닌 LLM이 읽을 수 있도록 작성하라.
+사람이 아닌 LLM이 읽는것으로 가정하여 작성하라.
 토큰 사용량을 최소화 하기 위해 필요없는 내용은 제거하며, 필요한 내용을 압축하여 작성하라.
-`
+
 자유롭게 작성하되, 다음 항목을 포함하세요:
 - 프로젝트 개요 및 주요 기능
 - 기능 요구사항 (도메인별)
@@ -217,40 +210,38 @@ public class {project_name}Application {{
     }}
 }}
 """
-        
+
         # 2. 파일 설정
     file_configs = [
-        {
-            "id": "setup-1",
-            "name": "build.gradle.kts",
-            "path": dest_dir,
-            "content": build_gradle_content
-        },
-        {
-            "id": "setup-2",
-            "name": "settings.gradle.kts",
-            "path": dest_dir,
-            "content": settings_gradle_content
-        },
-        {
-            "id": "setup-3",
-            "name": "application.yml",
-            "path": dest_dir / "src" / "main" / "resources",
-            "content": application_yml_content
-        },
-        {
-            "id": "setup-4",
-            "name": f"{project_name}Application.java",
-            "path": dest_dir / "src" / "main" / "java" / "com" / "example" / lower_project_name,
-            "content": application_java_content
-        }
-    ]
+    {
+        "id": "setup-1",
+        "name": "build.gradle.kts",
+        "path": dest_dir,
+        "content": build_gradle_content
+    },
+    {
+        "id": "setup-2",
+        "name": "settings.gradle.kts",
+        "path": dest_dir,
+        "content": settings_gradle_content
+    },
+    {
+        "id": "setup-3",
+        "name": "application.yml",
+        "path": dest_dir / "src" / "main" / "resources",
+        "content": application_yml_content
+    },
+    {
+        "id": "setup-4",
+        "name": f"{project_name}Application.java",
+        "path": dest_dir / "src" / "main" / "java" / "com" / "example" / lower_project_name,
+        "content": application_java_content
+    }]
     
     for config in file_configs:
-        generated_file = create_file(config["id"], config["path"] / config["name"], config["name"], config["content"])
+        build_gradle_kts = create_file(config["id"], config["path"] / config["name"], config["name"], config["content"])
         generated_files.append(generated_file)
         
-    
     return generated_files
 
 def setup_project(state: MultiAgentState) -> Dict[str, Any]:
@@ -278,8 +269,6 @@ def setup_project(state: MultiAgentState) -> Dict[str, Any]:
     token_usage_list = state.get("token_usage_list", [])
     generated_files = []
     
-    # 1단계: 프로젝트 이름과 의존성 결정
-    print("\n[1단계] 프로젝트 이름 및 의존성 결정...")
     system_prompt = """
     당신은 소프트웨어 프로젝트의 **프로젝트 설정 전문가**입니다.
     사용자의 요청을 바탕으로 프로젝트의 이름을 결정하고, 필요한 설정 파일을 생성해야 합니다.
@@ -354,9 +343,6 @@ def verify_project_setup(state: MultiAgentState) -> Dict[str, Any]:
     """
     프로젝트 설정을 검증합니다.
     """
-    print("\n" + "="*80)
-    print("🔍 [Verify Project Setup] 프로젝트 설정 검증 시작")
-    print("="*80)
     
     setup_files = state["project_setup_files"]
 
@@ -466,35 +452,22 @@ Analyst가 생성한 Epic List를 **검토하고 개선**하는 것이 당신의
 
 ## 주요 임무
 
-### 1. Project Setup Epic 검증 (최우선)
-- 첫 번째 Epic이 "Project Setup"인지 확인
-- Epic ID는 "epic-1", title은 정확히 "Project Setup"
-- priority는 1 (가장 높은 우선순위)
-- description에 다음 내용이 **구체적으로** 포함되어 있는지 확인:
-  
-  ✅ 필수 체크리스트:
-  - 생성할 파일 4개 명시 (build.gradle.kts, settings.gradle.kts, application.yml, Application.java)
-  - 각 파일의 정확한 경로 명시
-  - build.gradle.kts에 필요한 모든 의존성 나열 (Spring Boot, JPA, H2, Lombok, Security 등)
-  - application.yml 설정 항목 명시 (H2, JPA, port, logging)
-  - 패키지명 규칙 명시
-  
-  ⚠️ 누락 시: description을 보강하여 위 내용 모두 포함시킬 것
+### 1. 요구사항 검사
+사용자 요청을 다시 확인하여 빠진 기능이 없는지 체크:
+- 명시된 기능이 Epic으로 변환되었는가?
+- 공통 기능이 필요한가? (예: 예외 처리, 공통 응답 포맷 등)
+- 사용자가 요구하지 않은 기능이 포함되어 있는지 확인
+
+Epic 추가 혹은 제거
 
 ### 2. Epic 중복 검사
 - 같은 도메인이 여러 Epic으로 분리되어 있는지 확인
 - 예: "User 회원가입", "User 로그인" → "User Domain (Auth)" 하나로 통합
 - 중복 발견 시: Epic을 병합하고 description을 통합
+- 에픽이 하나의 모듈단위로 완전히 분리되어 있는지 확인
+- 하나의 모듈이 여러 Epic으로 분리되어 있는지 확인 (예시: 게시판 Epic과 댓글 Epic이 분리되어 있지 않은지 확인)
 
-### 3. Epic 누락 검사
-사용자 요청을 다시 확인하여 빠진 기능이 없는지 체크:
-- 명시된 기능이 Epic으로 변환되었는가?
-- 암시된 기능이 포함되었는가? (예: 게시판 → CRUD, 페이징, 검색)
-- 공통 기능이 필요한가? (예: 예외 처리, 공통 응답 포맷 등)
-
-누락 발견 시: 새로운 Epic 추가
-
-### 4. Epic 설명 품질 검사
+### 3. Epic 설명 품질 검사
 각 Epic의 description이 다음을 포함하는지 확인:
 - 구체적인 기능 목록
 - 입력/출력 데이터 형식
@@ -504,7 +477,7 @@ Analyst가 생성한 Epic List를 **검토하고 개선**하는 것이 당신의
 
 품질 부족 시: description을 구체적으로 보강 
 
-### 5. Epic 간 의존성 확인
+### 4. Epic 간 의존성 확인
 - 선행 Epic 없이 구현 불가능한 Epic이 있는지 확인
 - 예: Comment Epic은 Post Epic 이후에 와야 함
 - 의존성 순서대로 priority 재배치
@@ -621,7 +594,7 @@ src/main/java/com/example/{project_name}/domain/user/dto/UserDto.java
 출력 예시:
 주어진 Pydantic 모델 형식으로 출력합니다
 파일 경로에서 파일명은 제외하고 경로만 출력합니다.
-- id: task-1-1
+- id: task-1
 - file_path: src/main/java/com/example/{project_name}/domain/user
 - file_name: User.java
 - description: User 엔티티 클래스
