@@ -16,7 +16,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from .schemas import (
     AgenticCoderState,
     Specification,
-    APISignature,
     SingleFileGeneration,
     StaticReviewResult,
     CodeIssue,
@@ -96,13 +95,11 @@ def orchestrator_agent(state: AgenticCoderState) -> Dict[str, Any]:
     current_status = state.get("current_status", "spec")
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
-    
-    # 각 단계별 결과 요약
-    specification_status = "✅ 완료" if state.get("specification") else "❌ 미완료"
-    
+        
+
     # 파일 생성 상태
-    files_plan = state.get("files_plan") or []
-    generated_files = state.get("generated_files") or []
+    files_plan = state.get("files_plan", [])
+    generated_files = state.get("generated_files", [])
     current_file_index = state.get("current_file_index", 0)
     
     if files_plan:
@@ -115,7 +112,6 @@ def orchestrator_agent(state: AgenticCoderState) -> Dict[str, Any]:
     review_status = "✅ 통과" if state.get("review_passed") else ("❌ 실패" if state.get("review_result") else "⏳ 대기중")
     
     print(f"📊 현재 진행 상태:")
-    print(f"  - 명세서: {specification_status}")
     print(f"  - 파일 계획: {'✅ 완료' if files_plan else '❌ 미완료'} ({len(files_plan) if files_plan else 0}개 파일)")
     print(f"  - 코드 생성: {code_status}")
     if generated_files:
@@ -123,23 +119,31 @@ def orchestrator_agent(state: AgenticCoderState) -> Dict[str, Any]:
         for gf in generated_files[-2:]:
             print(f"      - {gf['file_name']}")
     print(f"  - 정적 리뷰: {review_status}")
-    print(f"  - 재시도 횟수: {retry_count}/{max_retries}")
     print(f"  - 현재 상태: {current_status}\n")
     
     # 상황 정보 수집
     context_info = f"""
 현재 워크플로우 상태:
 - 단계: {current_status}
-- 재시도 횟수: {retry_count}/{max_retries}
+- 검증 횟수: {retry_count}/{max_retries}
+
+이전 단계 결과:
+{state.get("pre_result", "없음")}
+
+이전 단계 제안사항:
+{state.get("previous_suggestions", "없음")}
 
 각 단계 완료 상태:
-- 명세서 작성: {specification_status}
 - 파일 계획: {'완료' if files_plan else '미완료'} (총 {len(files_plan) if files_plan else 0}개 파일)
 - 코드 생성: {code_status}
   - 생성 완료: {len(generated_files) if generated_files else 0}개
   - 남은 파일: {len(files_plan) - len(generated_files) if files_plan and generated_files else 0}개
 - 정적 리뷰: {review_status}
 """
+    # 파일 계획 상세 정보 추가
+    if files_plan:
+        context_info += f"\n파일 계획 상세 ({len(files_plan)}개):\n"
+        context_info += f"{files_plan}"
     
     # 최근 생성된 파일 정보
     if generated_files:
@@ -166,28 +170,24 @@ def orchestrator_agent(state: AgenticCoderState) -> Dict[str, Any]:
 당신은 최종적으로 사용자의 요구사항에 맞는 프로젝트를 완성하는 것이 목적입니다.
 
 ## 워크플로우 단계
-1. **specification_writer**: 명세서 작성 (한번에 전체)
+1. **specification_writer**: 명세서 작성 (files_plan 수립)
 2. **code_generator**: 코드 생성 (파일 하나씩)
 3. **static_reviewer**: 정적 리뷰
 4. **completed**: 모든 단계 완료
 
 ## 의사결정 원칙
 
-### 1. 명세서 완료 후 - 파일 계획 수립
-명세서가 완성되었고 files_plan이 없다면:
-- **전체 파일 목록 계획 수립 (files_plan)**
-  - Entity, Repository, DTO, Service, Controller, Exception 등
-  - 우선순위 부여 (Entity → Repository → DTO → Service → Controller)
-  - 의존성 명시 (Service는 Repository 의존 등)
-- **첫 번째 파일 지정 (next_file)**
-  - 가장 우선순위가 높은 파일 (보통 Entity)
-- next_action: "code_generator"
+### 1.파일 계획 수립
+files_plan이 없다면:
+- next_action: "specification_writer"
 
 ### 2. 파일 생성 진행 중
 files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
 - **다음 파일 결정 (next_file)**
-  - 우선순위 순서대로
-  - 의존성이 이미 생성되었는지 확인
+  - files_plan에 있는 파일 중 우선순위가 가장 높은 파일을 next_file로 설정
+  - 의존하는 파일이 모두 생성되었는지 확인
+- **의존성 확인 (dependent_files)**
+  - 의존성이 있다면 의존하는 파일 계획을 dependent_files에 추가.
 - next_action: "code_generator"
 
 ### 3. 모든 파일 생성 완료
@@ -205,24 +205,19 @@ files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
     - CRITICAL 이슈 있음 → 재시도 필요
     - MAJOR 이슈 많음 (3개 이상) → 재시도 고려
     - MINOR만 있음 → completed 가능
-  
-  - 재시도 판단:
-    - retry_count < max_retries → 재시도 가능
-    - 재시도할 가치 있으면:
-      - next_action: "code_generator"
-      - next_file: 문제있는 파일부터 다시 생성
-      - files_plan: 필요시 수정
-    - 재시도 가치 없거나 횟수 초과:
-      - next_action: "completed" (경고 메시지)
+
+- 검증 횟수 도달시 실패 처리:
+  - next_action: "failed"
+  - final_message 생성
 
 ## 출력 형식
 - OrchestratorDecision 모델로 출력
-- **files_plan**: 처음 계획할 때만 전체 목록 (FilePlan 리스트)
 - **next_file**: code_generator로 갈 때마다 다음 파일 (FilePlan 하나)
-- next_action, reasoning, confidence, suggestions
+- **dependent_files**: next_file이 의존하는 파일들 (선택사항)
+- next_action, reasoning, suggestions
 
 ## 중요 원칙
-1. **계획은 한번**: files_plan은 명세서 완료 후 한번만 수립
+1. **계획은 한번**: specification_writer 는 한번만 수행
 2. **한번에 하나**: next_file은 매번 한 파일씩만 지정
 3. **의존성 고려**: 의존하는 파일이 먼저 생성되도록
 4. **명확한 순서**: Entity → Repository → DTO → Service → Controller
@@ -247,19 +242,8 @@ files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
     
     print(f"✅ 오케스트라 결정 완료")
     print(f"  - 다음 행동: {decision.next_action}")
-    print(f"  - 확신도: {decision.confidence:.2f}")
-    print(f"  - 재시도 여부: {'예' if decision.should_retry else '아니오'}")
     print(f"\n📝 결정 이유:")
     print(f"  {decision.reasoning}\n")
-    
-    # 파일 계획이 있으면 출력
-    if decision.files_plan:
-        print(f"📋 파일 계획 수립: {len(decision.files_plan)}개 파일")
-        for fp in decision.files_plan[:5]:  # 처음 5개만
-            print(f"  [{fp.priority}] {fp.file_name} - {fp.description}")
-        if len(decision.files_plan) > 5:
-            print(f"  ... 외 {len(decision.files_plan) - 5}개")
-        print()
     
     # 다음 파일이 있으면 출력
     if decision.next_file:
@@ -269,8 +253,7 @@ files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
     
     if decision.suggestions:
         print(f"💡 제안사항:")
-        for suggestion in decision.suggestions:
-            print(f"  - {suggestion}")
+        print(f"  {decision.suggestions}")
         print()
     
     token_usage_list = state.get("token_usage_list", [])
@@ -281,12 +264,9 @@ files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
     result = {
         "current_status": decision.next_action,
         "orchestrator_reasoning": decision.reasoning,
-        "token_usage_list": token_usage_list
+        "token_usage_list": token_usage_list,
+        "previous_suggestions": decision.suggestions
     }
-    
-    # files_plan이 있으면 저장 (처음 계획할 때만)
-    if decision.files_plan:
-        result["files_plan"] = [fp.model_dump() for fp in decision.files_plan]
     
     # next_file이 있으면 저장
     if decision.next_file:
@@ -297,11 +277,8 @@ files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
         result["final_message"] = decision.final_message
         print(f"\n📢 최종 메시지: {decision.final_message}")
     
-    # 재시도 카운트 업데이트
-    if decision.should_retry:
-        result["retry_count"] = state.get("retry_count", 0) + 1
-    
     return result
+
 
 # ============================================
 # 1. Specification Writer Agent
@@ -311,12 +288,12 @@ def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
     """
     역할: 명세서 작성자
     입력: 사용자 요청
-    출력: 명세서 (API 시그니처 포함)
+    출력: 파일과 시그니처 목록
     
     주요 작업:
     - 사용자 요청 분석
     - 기능 요구사항 도출
-    - API 엔드포인트 설계 및 시그니처 추출
+    - API 시그니처 추출
     - 기술 스택 결정
     - 아키텍처 설계
     """
@@ -327,12 +304,12 @@ def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
     user_request = state["user_request"]
     print(f"사용자 요청: {user_request}\n")
     
-    llm = get_llm()
+    llm = get_llm("gemini-2.5-pro", is_openai=False)
     
     system_prompt = """
-당신은 **소프트웨어 요구사항 분석 및 명세서 작성 전문가**입니다.
-
-사용자의 간단한 요청을 받아 **완전하고 구체적인 기술 명세서**를 작성하는 것이 당신의 임무입니다.
+당신은 **API 시그니처 작성 전문가**입니다.
+사용자의 간단한 요청을 받아 **API 시그니처**를 작성하는 것이 당신의 임무입니다.
+프로젝트 생성에 필요한 모든 파일과 시그니처를 작성하라. 
 
 ## 핵심 작업
 
@@ -341,29 +318,25 @@ def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
 - 필요한 도메인 모델 식별
 - 비즈니스 규칙 정의
 
-### 2. API 설계 및 시그니처 추출
-- RESTful API 엔드포인트 설계
-- 각 API의 HTTP 메서드, 경로, 요청/응답 형식 명확히 정의
-- API 시그니처를 구조화된 형태로 추출
+### 2. API 시그니처 작성
+- 파일명과 API 시그니처를 구조화된 형태로 작성
+- 의존하는 파일명도 명시
+api_signatures 필드의 signature 필드는 반드시 다음과 같은 형태로 작성하라.
+완성된 코드가 아닌 인터페이스의 형태처럼 작성하라.
+Class Todo 
+    id: Long,
+    title: String,
+    description: String,
+    priority: Int
 
-예시:
-- POST /api/users - 사용자 등록
-  - 요청: ( username, email, password )
-  - 응답: ( id, username, email, createdAt )
-  
-- GET /api/users/id - 사용자 조회
-  - 요청: id (path variable)
-  - 응답: ( id, username, email, createdAt )
+Class TodoService
+    getTodo(Long id): Todo, 
+    createTodo(Todo todo): Todo
 
 ### 3. 기술 스택 결정
 - Spring Boot 기반 (Java 17, Spring Boot 3.x)
 - 필요한 의존성 명시 (JPA, Security, Validation 등)
-- 데이터베이스 및 기타 인프라
-
-### 4. 아키텍처 설계
-- 레이어 구조 (Controller - Service - Repository)
-- 패키지 구조
-- 주요 클래스 및 관계
+- 데이터베이스(H2 고정) 및 기타 인프라
 
 ## 출력 형식
 - 주어진 Pydantic 모델(Specification) 형식으로 출력
@@ -379,7 +352,7 @@ def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
     
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", "사용자 요청: {user_request}\n\n위 요청을 분석하여 완전한 기술 명세서를 작성해주세요.")
+        ("human", "사용자 요청: {user_request}\n\n위 요청을 분석하여 완전한 API 시그니처를 작성해주세요.")
     ])
     
     chain = prompt | llm.with_structured_output(Specification, include_raw=True)
@@ -389,26 +362,28 @@ def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
     specification = response["parsed"]
     raw_message = response["raw"]
     
-    print(f"✅ 명세서 작성 완료")
+    print(f"✅ API 시그니처 작성 완료")
     print(f"  - 프로젝트: {specification.title}")
     print(f"  - API 개수: {len(specification.api_signatures)}개")
     print(f"  - 기술 스택: {specification.technical_stack}\n")
-    
-    print("📋 API 시그니처 목록:")
-    for api in specification.api_signatures:
-        print(f"  - {api.endpoint}: {api.description}")
+
+    print(f"📋 파일 계획 목록:")
+    for i, file_plan in enumerate(specification.api_signatures):
+        print(f"  - {i+1}. {file_plan.file_name}: {file_plan.description}")
 
     token_usage_list = state.get("token_usage_list", [])
     token_usage = extract_token_usage(raw_message, "Specification Writer Agent")
     token_usage_list.append(token_usage)
-    
+
+    sum_result = [f"{content.file_name}: {content.description}" for content in specification.api_signatures]
+    sum_result = "\n".join(sum_result)
+
     return {
-        "specification": specification.model_dump_json(indent=2),
-        "api_signatures": [api.endpoint for api in specification.api_signatures],
+        "files_plan": specification.api_signatures,
+        "pre_result": sum_result,
         "current_status": "orchestrator",  # 오케스트라가 판단하도록
         "token_usage_list": token_usage_list
     }
-
 
 # ============================================
 # 2. Code Generator Agent (단일 파일 생성)
@@ -436,7 +411,6 @@ def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
         print("⚠️ 생성할 파일 정보가 없습니다.")
         return {"current_status": "orchestrator"}
     
-    specification_json = state["specification"]
     generated_files = state.get("generated_files", [])
     
     print(f"생성할 파일: {next_file['file_name']}")
@@ -513,13 +487,12 @@ def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
         ("human", """
 다음 파일을 생성해주세요.
 
-명세서:
-{specification}
-
 생성할 파일:
 - 파일명: {file_name}
 - 경로: {file_path}
 - 설명: {description}
+반드시 다음 시그니처를 준수하라.
+{signature}
 {generated_summary}
 {dependency_context}
 
@@ -530,9 +503,9 @@ def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
     chain = prompt | llm.with_structured_output(SingleFileGeneration, include_raw=True)
     
     response = chain.invoke({
-        "specification": specification_json,
         "file_name": next_file["file_name"],
         "file_path": next_file["file_path"],
+        "signature": next_file["signature"],
         "description": next_file["description"],
         "generated_summary": generated_summary,
         "dependency_context": dependency_context
@@ -544,6 +517,10 @@ def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
     print(f"✅ 파일 생성 완료")
     print(f"  - 파일: {file_gen.file_name}")
     print(f"  - 코드 길이: {len(file_gen.code_content)} 자\n")
+
+    print(f"📋 생성된 코드:")
+    print(f"  - {file_gen.code_content}")
+    print("="*80)
     
     # 생성된 파일 추가
     new_file = {
@@ -561,6 +538,7 @@ def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
     token_usage_list.append(token_usage)
     
     return {
+        "pre_result": "generated: " + file_gen.file_name + ": " + next_file["description"],
         "current_file_code": file_gen.code_content,
         "generated_files": updated_generated_files,
         "current_file_index": current_index + 1,
@@ -738,6 +716,7 @@ def static_reviewer_agent(state: AgenticCoderState) -> Dict[str, Any]:
                         for issue in review_result.issues],
         "current_status": "orchestrator",  # 오케스트라가 다음 결정
         "code_files": generated_files,  # 최종 결과 저장
+        "retry_count": state.get("retry_count", 0) + 1,
         "token_usage_list": token_usage_list
     }
 

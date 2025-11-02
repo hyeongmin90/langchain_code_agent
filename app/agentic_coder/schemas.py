@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 # ============================================
-# State 정의
+# 토큰 사용량 모델
 # ============================================
 
 class TokenUsage(BaseModel):
@@ -17,6 +17,37 @@ class TokenUsage(BaseModel):
     output_tokens: int = Field(description="출력 토큰 수")
     total_tokens: int = Field(description="총 토큰 수")
 
+
+# ============================================
+# 코드 생성 관련 모델 (먼저 정의 - AgenticCoderState에서 참조)
+# ============================================
+
+class FilePlan(BaseModel):
+    """오케스트라가 계획한 파일 정보"""
+    file_name: str = Field(description="파일명")
+    file_path: str = Field(description="파일 경로")
+    signature: str = Field(description="API 시그니처")
+    description: str = Field(description="파일 설명")
+    dependencies: Optional[List[str]] = Field(default=None, description="의존하는 파일명들")
+    priority: int = Field(description="생성 우선순위 (낮을수록 먼저)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "file_name": "Todo.java",
+                "file_path": "src/main/java/com/example/todo/domain",
+                "signature": "Class Todo { id: Long, title: String, description: String, priority: Int }",
+                "description": "Todo 엔티티 클래스",
+                "dependencies": [],
+                "priority": 1
+            }
+        }
+
+
+# ============================================
+# State 정의
+# ============================================
+
 class AgenticCoderState(TypedDict):
     """
     Agentic Coder 워크플로우의 상태를 관리하는 State
@@ -24,12 +55,14 @@ class AgenticCoderState(TypedDict):
     # 입력
     user_request: str
     
+    # 이전 단계 제안사항
+    previous_suggestions: Optional[str]
+
     # 명세서 작성 단계 (한번에 전체 생성)
     specification: Optional[str]
-    api_signatures: Optional[List[str]]
     
     # 파일 계획 (오케스트라가 관리)
-    files_plan: Optional[List[dict]]  # 전체 파일 계획
+    files_plan: Optional[List[dict]]  # 전체 파일 계획 (dict 형태로 저장)
     current_file_index: int  # 현재 생성 중인 파일 인덱스
     next_file_to_generate: Optional[dict]  # 오케스트라가 지정한 다음 파일
     
@@ -51,6 +84,8 @@ class AgenticCoderState(TypedDict):
     final_code: Optional[str]
     final_message: Optional[str]
 
+    pre_result: Optional[str]
+
     token_usage_list: List[TokenUsage]
 
 
@@ -58,73 +93,35 @@ class AgenticCoderState(TypedDict):
 # 명세서 관련 모델
 # ============================================
 
-class APISignature(BaseModel):
-    """API 시그니처 정보"""
-    endpoint: str = Field(description="API 엔드포인트 (예: GET /api/users)")
-    description: str = Field(description="API 설명")
-    request_params: Optional[str] = Field(default=None, description="요청 파라미터 설명")
-    response_format: Optional[str] = Field(default=None, description="응답 형식 설명")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "endpoint": "GET /api/users/{id}",
-                "description": "사용자 정보 조회",
-                "request_params": "id: 사용자 ID (Long)",
-                "response_format": "{ id, name, email, createdAt }"
-            }
-        }
-
-
 class Specification(BaseModel):
     """명세서"""
     title: str = Field(description="프로젝트 제목")
-    overview: str = Field(description="프로젝트 개요")
-    requirements: str = Field(description="상세 요구사항")
-    api_signatures: List[APISignature] = Field(description="API 시그니처 목록")
+    api_signatures: List[FilePlan] = Field(description="API 시그니처 목록")
     technical_stack: str = Field(description="기술 스택")
-    architecture_notes: Optional[str] = Field(default=None, description="아키텍처 참고사항")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "title": "TodoList API",
-                "overview": "간단한 할 일 관리 REST API",
-                "requirements": "CRUD 기능, 사용자 인증, 우선순위 관리",
+                "title": "TodoList",
                 "api_signatures": [
                     {
-                        "endpoint": "POST /api/todos",
-                        "description": "새로운 할 일 생성",
-                        "request_params": "{ title, description, priority }",
-                        "response_format": "{ id, title, description, priority, createdAt }"
+                        "file_name": "Todo.java",
+                        "file_path": "src/main/java/com/example/todo/domain",
+                        "signature": "Class Todo { id: Long, title: String, description: String, priority: Int }",
+                        "description": "Todo 엔티티 클래스",
+                        "dependencies": [],
+                        "priority": 1
+                    },
+                    {
+                        "file_name": "TodoService.java",
+                        "file_path": "src/main/java/com/example/todo/service",
+                        "signature": "Class TodoService { getTodo(Long id): Todo, createTodo(Todo todo): Todo }",
+                        "description": "Todo 서비스 클래스",
+                        "dependencies": ["Todo.java", "TodoRepository.java"],
+                        "priority": 2
                     }
                 ],
-                "technical_stack": "Spring Boot 3.x, Java 17, JPA, H2",
-                "architecture_notes": "Layered Architecture (Controller-Service-Repository)"
-            }
-        }
-
-
-# ============================================
-# 코드 생성 관련 모델
-# ============================================
-
-class FilePlan(BaseModel):
-    """오케스트라가 계획한 파일 정보"""
-    file_name: str = Field(description="파일명")
-    file_path: str = Field(description="파일 경로")
-    description: str = Field(description="파일 설명")
-    dependencies: Optional[List[str]] = Field(default=None, description="의존하는 파일명들")
-    priority: int = Field(description="생성 우선순위 (낮을수록 먼저)")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "file_name": "Todo.java",
-                "file_path": "src/main/java/com/example/todo/domain",
-                "description": "Todo 엔티티 클래스",
-                "dependencies": [],
-                "priority": 1
+                "technical_stack": "Spring Boot 3.x, Java 17, JPA, H2"
             }
         }
 
@@ -246,16 +243,15 @@ class OrchestratorDecision(BaseModel):
     )
     reasoning: str = Field(description="결정 이유 및 분석")
     should_retry: bool = Field(default=False, description="재시도 필요 여부")
-    confidence: float = Field(description="결정에 대한 확신도 (0.0 ~ 1.0)")
     
-    # 파일 계획 관련 (code_generator로 갈 때만 사용)
-    files_plan: Optional[List[FilePlan]] = Field(default=None, description="전체 파일 생성 계획")
-    next_file: Optional[FilePlan] = Field(default=None, description="다음에 생성할 파일")
+    # 파일 계획 관련
+    next_file: Optional[FilePlan] = Field(default=None, description="다음에 생성할 파일 (code_generator로 갈 때마다)")
+    dependent_files: Optional[List[FilePlan]] = Field(default=None, description="의존하는 파일 목록")
     
     # 완료 시 최종 메시지 (completed일 때만 사용)
     final_message: Optional[str] = Field(default=None, description="워크플로우 완료 시 최종 메시지")
     
-    suggestions: Optional[List[str]] = Field(default=None, description="다음 단계를 위한 제안사항")
+    suggestions: Optional[str] = Field(default=None, description="다음 단계를 위한 제안사항")
     
     class Config:
         json_schema_extra = {
@@ -263,11 +259,10 @@ class OrchestratorDecision(BaseModel):
                 "next_action": "code_generator",
                 "reasoning": "명세서 완성. 첫 번째 파일인 Entity부터 생성 시작.",
                 "should_retry": False,
-                "confidence": 0.95,
                 "files_plan": [{"file_name": "Todo.java", "priority": 1}],
                 "next_file": {"file_name": "Todo.java", "priority": 1},
                 "final_message": None,
-                "suggestions": ["Entity부터 순차적으로 생성"]
+                "suggestions": "Entity부터 순차적으로 생성"
             }
         }
 

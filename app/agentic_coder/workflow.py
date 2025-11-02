@@ -144,7 +144,6 @@ def run_agentic_coder(user_request: str, max_retries: int = 2):
     initial_state = {
         "user_request": user_request,
         "specification": None,
-        "api_signatures": None,
         
         # 파일 계획 (오케스트라가 관리)
         "files_plan": [],
@@ -190,17 +189,17 @@ def run_agentic_coder(user_request: str, max_retries: int = 2):
     if final_state.get("final_message"):
         print(f"\n📢 {final_state['final_message']}\n")
     
-    # 명세서 요약
-    if final_state.get("api_signatures"):
-        print(f"📋 API 엔드포인트: {len(final_state['api_signatures'])}개")
-        for api in final_state["api_signatures"]:
-            print(f"   - {api}")
+    # 파일 계획 요약
+    if final_state.get("files_plan"):
+        print(f"📋 파일 계획: {len(final_state['files_plan'])}개 파일")
+        for fp in final_state["files_plan"]:
+            print(f"   - {fp['file_name']} ({fp['file_path']})")
         print()
     
     # 생성된 파일 목록
-    if final_state.get("code_files"):
-        print(f"📄 생성된 파일: {len(final_state['code_files'])}개")
-        for file in final_state["code_files"]:
+    if final_state.get("generated_files"):
+        print(f"📄 생성된 파일: {len(final_state['generated_files'])}개")
+        for file in final_state["generated_files"]:
             print(f"   - {file['file_path']}/{file['file_name']}")
         print()
     
@@ -236,7 +235,7 @@ def export_code_to_files(final_state: AgenticCoderState, output_dir: str = "./ge
     import os
     from pathlib import Path
     
-    if not final_state.get("code_files"):
+    if not final_state.get("generated_files"):
         print("❌ 생성된 코드가 없습니다.")
         return
     
@@ -245,7 +244,7 @@ def export_code_to_files(final_state: AgenticCoderState, output_dir: str = "./ge
     
     print(f"\n📦 코드 파일 저장 중: {output_dir}")
     
-    for file_info in final_state["code_files"]:
+    for file_info in final_state["generated_files"]:
         file_path = output_path / file_info["file_path"]
         file_path.mkdir(parents=True, exist_ok=True)
         

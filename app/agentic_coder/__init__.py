@@ -12,7 +12,6 @@ Agentic Coder 모듈
 from .schemas import (
     AgenticCoderState,
     Specification,
-    APISignature,
     FilePlan,
     SingleFileGeneration,
     GeneratedCodeFile,
@@ -40,7 +39,6 @@ __all__ = [
     # Schemas
     "AgenticCoderState",
     "Specification",
-    "APISignature",
     "FilePlan",
     "SingleFileGeneration",
     "GeneratedCodeFile",
