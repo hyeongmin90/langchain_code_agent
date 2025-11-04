@@ -8,21 +8,41 @@ Agentic Coder의 에이전트 구현
 """
 
 import os
-from typing import Dict, Any
+import asyncio
+import uuid
+import zipfile
+from pathlib import Path
+from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from .schemas import (
     AgenticCoderState,
-    Specification,
-    SingleFileGeneration,
-    StaticReviewResult,
-    CodeIssue,
-    OrchestratorDecision,
-    TokenUsage
+    TokenUsage,
+    RequirementAnalysisResult,
+    SkeletonCodeList,
+    BuildGradleKts,
 )
 
+def create_file(file_path: Path, content: str):
+    """
+    파일을 생성합니다.
+    
+    Args:
+        file_path: 전체 파일 경로 (Path 객체)
+        content: 파일 내용
+    
+    Returns:
+        None
+    """
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if '\\n' in content or '\\t' in content:
+        content = content.encode().decode('unicode_escape')
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 def get_llm(model: str = "gpt-5-mini", is_openai: bool = True):
     """LLM 인스턴스 생성"""
@@ -65,658 +85,493 @@ def extract_token_usage(result, step_name: str) -> TokenUsage:
     
     return token_usage
 
+
 # ============================================
-# 오케스트라 에이전트 (Orchestrator Agent)
+# 1. requirement_analyst_agent
 # ============================================
 
-def orchestrator_agent(state: AgenticCoderState) -> Dict[str, Any]:
+def requirement_analyst_agent(state: AgenticCoderState) -> Dict[str, Any]:
     """
-    에이전틱 오케스트라 에이전트: LLM을 사용하여 워크플로우를 지능적으로 조율
+    역할: 요구사항 분석자
+    입력: 사용자의 요구사항
+    출력: 요구사항 분석 결과
     
-    역할:
-    - 현재 상태를 분석하고 평가
-    - 각 에이전트의 결과를 검토
-    - 다음 단계를 동적으로 결정
-    - 재시도 필요 여부 판단
-    - 워크플로우 완료 조건 평가
-    
-    특징:
-    - 단순 조건문이 아닌 LLM 기반 의사결정
-    - 상황에 맞는 적응적 판단
-    - 명확한 이유와 함께 결정 제시
+    주요 작업:
+    - 사용자의 요구사항을 분석하여 요구사항 분석 결과를 생성
     """
     print("\n" + "="*80)
-    print("🎯 [Orchestrator Agent] 워크플로우 분석 및 다음 단계 결정")
+    print("📝 [Requirement Analyst Agent] 요구사항 분석 시작")
     print("="*80)
     
-    llm = ChatOpenAI(model="gpt-5-mini")
+    orchestrator_request = state["orchestrator_request"]
+    print(f"에이전트 요청: {orchestrator_request}")
     
-    # 현재 상태 분석을 위한 컨텍스트 구성
-    current_status = state.get("current_status", "spec")
-    retry_count = state.get("retry_count", 0)
-    max_retries = state.get("max_retries", 2)
-        
-
-    # 파일 생성 상태
-    files_plan = state.get("files_plan", [])
-    generated_files = state.get("generated_files", [])
-    current_file_index = state.get("current_file_index", 0)
-    
-    if files_plan:
-        code_status = f"진행 중 ({len(generated_files)}/{len(files_plan)} 파일)"
-        if len(generated_files) == len(files_plan):
-            code_status = "✅ 완료"
-    else:
-        code_status = "❌ 계획 전"
-    
-    review_status = "✅ 통과" if state.get("review_passed") else ("❌ 실패" if state.get("review_result") else "⏳ 대기중")
-    
-    print(f"📊 현재 진행 상태:")
-    print(f"  - 파일 계획: {'✅ 완료' if files_plan else '❌ 미완료'} ({len(files_plan) if files_plan else 0}개 파일)")
-    print(f"  - 코드 생성: {code_status}")
-    if generated_files:
-        print(f"    최근 생성 파일:")
-        for gf in generated_files[-2:]:
-            print(f"      - {gf['file_name']}")
-    print(f"  - 정적 리뷰: {review_status}")
-    print(f"  - 현재 상태: {current_status}\n")
-    
-    # 상황 정보 수집
-    context_info = f"""
-현재 워크플로우 상태:
-- 단계: {current_status}
-- 검증 횟수: {retry_count}/{max_retries}
-
-이전 단계 결과:
-{state.get("pre_result", "없음")}
-
-이전 단계 제안사항:
-{state.get("previous_suggestions", "없음")}
-
-각 단계 완료 상태:
-- 파일 계획: {'완료' if files_plan else '미완료'} (총 {len(files_plan) if files_plan else 0}개 파일)
-- 코드 생성: {code_status}
-  - 생성 완료: {len(generated_files) if generated_files else 0}개
-  - 남은 파일: {len(files_plan) - len(generated_files) if files_plan and generated_files else 0}개
-- 정적 리뷰: {review_status}
-"""
-    # 파일 계획 상세 정보 추가
-    if files_plan:
-        context_info += f"\n파일 계획 상세 ({len(files_plan)}개):\n"
-        context_info += f"{files_plan}"
-    
-    # 최근 생성된 파일 정보
-    if generated_files:
-        context_info += f"\n모든 생성된 파일:\n"
-        for gf in generated_files:
-            context_info += f"- {gf['file_name']}\n"
-    
-    # 리뷰 결과가 있다면 추가
-    if state.get("review_result"):
-        import json
-        review_data = json.loads(state["review_result"])
-        issues_summary = f"발견된 이슈: {len(review_data['issues'])}개"
-        if review_data['issues']:
-            critical_count = sum(1 for issue in review_data['issues'] if issue['severity'] == 'CRITICAL')
-            major_count = sum(1 for issue in review_data['issues'] if issue['severity'] == 'MAJOR')
-            issues_summary += f" (CRITICAL: {critical_count}, MAJOR: {major_count})"
-        
-        context_info += f"\n정적 리뷰 결과:\n- {issues_summary}\n- 요약: {review_data['summary']}\n"
+    llm = get_llm()
     
     system_prompt = """
-당신은 **코드 생성 워크플로우의 총괄 매니저이자 파일 계획자**입니다.
-당신의 임무는 현재 상황을 분석하고, **다음 행동과 생성할 파일을 지능적으로 결정**하는 것입니다.
+당신은 **요구사항 분석 전문가**입니다.
+사용자의 간단한 요청을 받아 프로젝트 이름, 요구사항 분석 결과를 생성하는 것이 당신의 임무입니다.
 
-당신은 최종적으로 사용자의 요구사항에 맞는 프로젝트를 완성하는 것이 목적입니다.
+### 프로젝트 이름 작성 규칙
+- 길고 복잡한 이름 대신, 간단명료하게 단어 위주로 작성합니다.
+- "SimpleTodolist" 처럼 형용사 등을 붙이기보단, 핵심 도메인만 사용 (예: Todolist, Blog 등).
+- 불필요한 접두어/접미어/형용사는 제외합니다.
+- 영어 단어만 사용하고, 공백 없이 카멜표기법으로 작성합니다.
+- 너무 축약/생략하지 마시고, 사용자의 요구가 드러나는 명사를 충실하게 씁니다.
 
-## 워크플로우 단계
-1. **specification_writer**: 명세서 작성 (files_plan 수립)
-2. **code_generator**: 코드 생성 (파일 하나씩)
-3. **static_reviewer**: 정적 리뷰
-4. **completed**: 모든 단계 완료
-
-## 의사결정 원칙
-
-### 1.파일 계획 수립
-files_plan이 없다면:
-- next_action: "specification_writer"
-
-### 2. 파일 생성 진행 중
-files_plan이 있고 아직 모든 파일이 생성되지 않았다면:
-- **다음 파일 결정 (next_file)**
-  - files_plan에 있는 파일 중 우선순위가 가장 높은 파일을 next_file로 설정
-  - 의존하는 파일이 모두 생성되었는지 확인
-- **의존성 확인 (dependent_files)**
-  - 의존성이 있다면 의존하는 파일 계획을 dependent_files에 추가.
-- next_action: "code_generator"
-
-### 3. 모든 파일 생성 완료
-모든 파일이 생성되었다면:
-- next_action: "static_reviewer"
-
-### 4. 리뷰 결과 분석 및 최종 결정
-리뷰가 완료되었다면:
-- **통과 (passed=True)**: 
-  - next_action: "completed"
-  - final_message 생성
-  
-- **실패 (passed=False)**:
-  - 이슈 심각도 분석:
-    - CRITICAL 이슈 있음 → 재시도 필요
-    - MAJOR 이슈 많음 (3개 이상) → 재시도 고려
-    - MINOR만 있음 → completed 가능
-
-- 검증 횟수 도달시 실패 처리:
-  - next_action: "failed"
-  - final_message 생성
+### 요구사항 분석
+- 명시된 기능과 암시된 기능을 모두 파악
+- 필요한 도메인 모델 식별
+- 비즈니스 규칙 정의
+- 자바 백엔드 기준으로 분석
 
 ## 출력 형식
-- OrchestratorDecision 모델로 출력
-- **next_file**: code_generator로 갈 때마다 다음 파일 (FilePlan 하나)
-- **dependent_files**: next_file이 의존하는 파일들 (선택사항)
-- next_action, reasoning, suggestions
+- 추가적인 설명이나 의견은 작성하지 말고, 분석된 요구사항만 작성하라.
 
 ## 중요 원칙
-1. **계획은 한번**: specification_writer 는 한번만 수행
-2. **한번에 하나**: next_file은 매번 한 파일씩만 지정
-3. **의존성 고려**: 의존하는 파일이 먼저 생성되도록
-4. **명확한 순서**: Entity → Repository → DTO → Service → Controller
+1. **구체성**: 모호한 표현 금지, 구현 가능한 수준으로 작성
+2. **완전성**: 모든 필요한 요구사항을 빠짐없이 포함
 """
     
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", """
-현재 상황:
-{context}
-
-위 상황을 분석하여 다음 행동을 결정해주세요.
-""")
+        ("human", "사용자 요청: {user_request}\n\n위 요청을 분석하여 요구사항 분석 결과를 생성해주세요.")
     ])
     
-    chain = prompt | llm.with_structured_output(OrchestratorDecision, include_raw=True)
+    chain = prompt | llm.with_structured_output(RequirementAnalysisResult, include_raw=True)
     
-    response = chain.invoke({"context": context_info})
-    
-    decision = response["parsed"]
+    response = chain.invoke({"user_request": orchestrator_request})
+
+    result = response["parsed"]
     raw_message = response["raw"]
     
-    print(f"✅ 오케스트라 결정 완료")
-    print(f"  - 다음 행동: {decision.next_action}")
-    print(f"\n📝 결정 이유:")
-    print(f"  {decision.reasoning}\n")
-    
-    # 다음 파일이 있으면 출력
-    if decision.next_file:
-        print(f"🎯 다음 생성 파일: {decision.next_file.file_name}")
-        print(f"   경로: {decision.next_file.file_path}")
-        print(f"   설명: {decision.next_file.description}\n")
-    
-    if decision.suggestions:
-        print(f"💡 제안사항:")
-        print(f"  {decision.suggestions}")
-        print()
-    
     token_usage_list = state.get("token_usage_list", [])
-    token_usage = extract_token_usage(raw_message, "Orchestrator Agent")
+    token_usage = extract_token_usage(raw_message, "Requirement Analyst Agent")
     token_usage_list.append(token_usage)
 
-    # State 업데이트
-    result = {
-        "current_status": decision.next_action,
-        "orchestrator_reasoning": decision.reasoning,
-        "token_usage_list": token_usage_list,
-        "previous_suggestions": decision.suggestions
+    return {
+        "requirement_analysis_result": result.model_dump(),
+        "token_usage_list": token_usage_list
     }
-    
-    # next_file이 있으면 저장
-    if decision.next_file:
-        result["next_file_to_generate"] = decision.next_file.model_dump()
-    
-    # final_message가 있으면 저장 (completed일 때)
-    if decision.final_message:
-        result["final_message"] = decision.final_message
-        print(f"\n📢 최종 메시지: {decision.final_message}")
-    
-    return result
+
 
 
 # ============================================
-# 1. Specification Writer Agent
+# 1. Setup Project (프로젝트 설정)
 # ============================================
 
-def specification_writer_agent(state: AgenticCoderState) -> Dict[str, Any]:
+def setup_project(state: AgenticCoderState) -> Dict[str, Any]:
     """
-    역할: 명세서 작성자
-    입력: 사용자 요청
-    출력: 파일과 시그니처 목록
-    
-    주요 작업:
-    - 사용자 요청 분석
-    - 기능 요구사항 도출
-    - API 시그니처 추출
-    - 기술 스택 결정
-    - 아키텍처 설계
+    프로젝트 설정 및 초기 파일 생성
+    - 프로젝트 디렉토리 생성
+    - 프로젝트 이름 및 의존성 결정
+    - 초기 설정 파일 생성 (build.gradle.kts, settings.gradle.kts, application.yml)
     """
     print("\n" + "="*80)
-    print("📝 [Specification Writer Agent] 명세서 작성 시작")
+    print("🔧 [Setup Project] 프로젝트 설정 및 초기 파일 생성 시작")
     print("="*80)
     
-    user_request = state["user_request"]
-    print(f"사용자 요청: {user_request}\n")
+    
+    llm = get_llm()
+    
+    system_prompt = """
+    당신은 소프트웨어 프로젝트의 **프로젝트 설정 전문가**입니다.
+    사용자의 요청을 바탕으로 필요한 설정 파일을 생성해야 합니다.
+
+    ### 파일 1: build.gradle.kts
+    - gradle-kotlin
+    - Spring Boot 3.x 버전 사용
+    - Java 17 사용
+    - 기본 의존성: Spring Web, Spring Data JPA, H2 Database, Lombok
+    - 요구사항을 분석하여 필요한 의존성을 모두 포함
+
+    ### 파일 2: application.yml
+    - 서버 포트 8080
+    - 만약 db가 필요하다면 H2 데이터베이스, 콘솔 활성화, 인메모리 DB를 사용하라.
+    - JPA 설정 (hibernate ddl-auto: create-drop, show-sql: true)
+    - 환경 변수 설정
+    - 요구사항을 분석하여 필요한 설정을 모두 포함
+
+    ### 중요:
+    - 각 파일의 **순수한 코드만** 출력하세요 (설명, 마크다운 코드 블록 사용 금지)
+    - 주석은 필요한 경우에만 최소한으로 작성
+    - 줄바꿈은 실제 줄바꿈을 사용하세요 (\\n 문자열이 아닌 실제 개행)
+
+    ### 출력 형식:
+    출력 형식은 주어진 Pydantic 모델 형식으로 출력합니다.
+    파일 내용은 실제 줄바꿈이 포함된 멀티라인 문자열로 작성하세요.
+    """
+
+    prompt = ChatPromptTemplate([
+        ("system", system_prompt),
+        ("human", "사용자 요청: {user_request}")
+    ])
+    chain = prompt | llm.with_structured_output(BuildGradleKts, include_raw=True) 
+
+    response = chain.invoke({
+        "user_request": state["requirement_analysis_result"]
+    })
+
+    project_setup = response["parsed"]
+    raw_message = response["raw"]
+
+    token_usage_list = state.get("token_usage_list", [])
+    token_usage = extract_token_usage(raw_message, "Setup Project - 기본 설정")
+    token_usage_list.append(token_usage)
+    
+    project_name = state.get("requirement_analysis_result", {}).get("project_name", "")
+    lower_project_name = project_name.lower()
+    
+    settings_gradle_content = f'rootProject.name = "{lower_project_name}"\n'
+    
+    setup_files = {
+        "build.gradle.kts": {
+            "file_name": "build.gradle.kts",
+            "file_path": "build.gradle.kts",  # 프로젝트 루트
+            "code_content": project_setup.build_gradle_kts
+        },
+        "settings.gradle.kts": {
+            "file_name": "settings.gradle.kts",
+            "file_path": "settings.gradle.kts",  # 프로젝트 루트
+            "code_content": settings_gradle_content
+        },
+        "src/main/resources/application.yml": {
+            "file_name": "application.yml",
+            "file_path": "src/main/resources/application.yml",  # 상대 경로
+            "code_content": project_setup.application_yml
+        }
+    }
+    
+    return {
+        "generated_files": setup_files,
+        "token_usage_list": token_usage_list
+    }
+
+# ============================================
+# 2. Skeleton Code Generator Agent
+# ============================================
+
+def skeleton_code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
+    """
+    역할: 스켈레톤 코드 생성자
+    입력: 파일 계획
+    출력: 스켈레톤 코드
+    """
+    print("\n" + "="*80)
+    print("💻 [Skeleton Code Generator Agent] 스켈레톤 코드 생성")
+    print("="*80)
     
     llm = get_llm("gemini-2.5-pro", is_openai=False)
     
     system_prompt = """
-당신은 **API 시그니처 작성 전문가**입니다.
-사용자의 간단한 요청을 받아 **API 시그니처**를 작성하는 것이 당신의 임무입니다.
-프로젝트 생성에 필요한 모든 파일과 시그니처를 작성하라. 
-
-## 핵심 작업
-
-### 1. 요구사항 분석
-- 명시된 기능과 암시된 기능을 모두 파악
-- 필요한 도메인 모델 식별
-- 비즈니스 규칙 정의
-
-### 2. API 시그니처 작성
-- 파일명과 API 시그니처를 구조화된 형태로 작성
-- 의존하는 파일명도 명시
-api_signatures 필드의 signature 필드는 반드시 다음과 같은 형태로 작성하라.
-완성된 코드가 아닌 인터페이스의 형태처럼 작성하라.
-Class Todo 
-    id: Long,
-    title: String,
-    description: String,
-    priority: Int
-
-Class TodoService
-    getTodo(Long id): Todo, 
-    createTodo(Todo todo): Todo
-
-### 3. 기술 스택 결정
-- Spring Boot 기반 (Java 17, Spring Boot 3.x)
-- 필요한 의존성 명시 (JPA, Security, Validation 등)
-- 데이터베이스(H2 고정) 및 기타 인프라
-
-## 출력 형식
-- 주어진 Pydantic 모델(Specification) 형식으로 출력
-- API 시그니처는 APISignature 모델 리스트로 구조화
-- 명확하고 구현 가능한 수준으로 작성
-
-## 중요 원칙
-1. **구체성**: 모호한 표현 금지, 구현 가능한 수준으로 작성
-2. **완전성**: 모든 필요한 API와 기능을 빠짐없이 포함
-3. **일관성**: 명명 규칙, 응답 형식 등 일관성 유지
-4. **실용성**: 과도한 설계 지양, MVP 수준의 실용적 설계
-"""
+    당신은 **Spring Boot 전문 개발자**입니다.
+    주어진 요구사항을 바탕으로 **스켈레톤 코드**를 생성하는 것이 당신의 임무입니다.
     
+    ### 주의사항
+    - 자바 스프링 부트 3.x 기반으로 스켈레톤 코드를 생성하라.
+    - 자바 17 사용
+    - 주어진 기술 스택을 준수하라.
+
+    ### 핵심 작업
+
+    ### 1. 요구사항 분석
+    - 요구사항을 분석하여 스켈레톤 코드를 생성해야 하는 파일을 결정
+
+    ### 2. 스켈레톤 코드 생성
+    - 결정된 파일을 바탕으로 스켈레톤 코드를 생성
+    - 기능(메서드) 구현 대신 주석으로 필요한 기능을 명시
+        - 주석에는 필요한 정보를 자세히 명시하여 다른 파일을 보지 않아도 코드 구현이 가능하도록 하라.
+        - 의존성있는 타입, 메서드, 변수명, 클래스명 등을 명시하라.
+    - 또한 문제 없이 컴파일 되는 코드를 생성하라.
+    - Entity, DTO, Repository의 경우 완성된 코드를 생성하라.
+    - .java 확장자 파일만 생성하라.
+    - import, 어노테이션, 메서드, 의존성 주입만 구현된 스켈레톤 코드를 생성하라.
+
+
+    ### 3. 패키지 구조 설계
+    - 프로젝트의 규모에 따라 적절한 패키지 구조를 설계하라.
+    - 프로젝트의 이름을 정하고 패키지 구조를 설계하라. 기본 패키지 구조는 com.example.(프로젝트 이름) 이다.
+    - 파일 경로는 파일 이름까지 포함된 전체 경로를 출력하라.
+
+    ## 출력 형식
+    - SkeletonCode 모델로 출력
+    - file_name, file_path, code_content, need_to_generate
+    - import, 어노테이션, 메서드, 의존성 주입만 구현된 스켈레톤 코드를 생성하라.
+    - 프로젝트의 실행점인 *.Application.java 파일을 가장 처음에 생성하라.
+    - need_to_generate 설정:
+      - Entity, DTO, Repository, Exception(Custom Exception 제외), Application.java: False (이미 완전한 코드로 생성되므로 추가 구현 불필요)
+      - Service, Controller, Security, Handler, Filter 등 비즈니스 로직이 필요한 파일: True (메서드 구현 필요)
+    
+    ## 중요 원칙
+    - 일관성: 패키지 구조, 파일 명, 클래스 명, 메서드 명, 변수 명 등 일관성 유지
+    """
+
     prompt = ChatPromptTemplate([
         ("system", system_prompt),
-        ("human", "사용자 요청: {user_request}\n\n위 요청을 분석하여 완전한 API 시그니처를 작성해주세요.")
+        ("human", "요구사항: {user_request}\n\n application.yml 파일 내용: {application_yml}\n\n위 요구사항을 바탕으로 스켈레톤 코드를 생성해주세요.")
     ])
     
-    chain = prompt | llm.with_structured_output(Specification, include_raw=True)
-    
-    response = chain.invoke({"user_request": user_request})
-    
-    specification = response["parsed"]
-    raw_message = response["raw"]
-    
-    print(f"✅ API 시그니처 작성 완료")
-    print(f"  - 프로젝트: {specification.title}")
-    print(f"  - API 개수: {len(specification.api_signatures)}개")
-    print(f"  - 기술 스택: {specification.technical_stack}\n")
+    chain = prompt | llm.with_structured_output(SkeletonCodeList, include_raw=True)
 
-    print(f"📋 파일 계획 목록:")
-    for i, file_plan in enumerate(specification.api_signatures):
-        print(f"  - {i+1}. {file_plan.file_name}: {file_plan.description}")
+    requirement_analysis_result = state.get("requirement_analysis_result", {})
 
-    token_usage_list = state.get("token_usage_list", [])
-    token_usage = extract_token_usage(raw_message, "Specification Writer Agent")
-    token_usage_list.append(token_usage)
+    generated_files = state.get("generated_files", {})
+    application_yml = generated_files.get("src/main/resources/application.yml", {}).get("code_content", "")
 
-    sum_result = [f"{content.file_name}: {content.description}" for content in specification.api_signatures]
-    sum_result = "\n".join(sum_result)
-
-    return {
-        "files_plan": specification.api_signatures,
-        "pre_result": sum_result,
-        "current_status": "orchestrator",  # 오케스트라가 판단하도록
-        "token_usage_list": token_usage_list
-    }
-
-# ============================================
-# 2. Code Generator Agent (단일 파일 생성)
-# ============================================
-
-def code_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
-    """
-    역할: 단일 파일 코드 생성자
-    입력: 오케스트라가 지정한 파일 정보 (next_file_to_generate)
-    출력: 단일 파일 코드
-    
-    주요 작업:
-    - 오케스트라가 지정한 파일 하나만 생성
-    - 이미 생성된 파일들(generated_files)을 참조
-    - 명세서와 일관성 유지
-    """
-    print("\n" + "="*80)
-    print("💻 [Code Generator Agent] 단일 파일 생성")
-    print("="*80)
-    
-    import json
-    
-    next_file = state.get("next_file_to_generate")
-    if not next_file:
-        print("⚠️ 생성할 파일 정보가 없습니다.")
-        return {"current_status": "orchestrator"}
-    
-    generated_files = state.get("generated_files", [])
-    
-    print(f"생성할 파일: {next_file['file_name']}")
-    print(f"경로: {next_file['file_path']}")
-    print(f"설명: {next_file['description']}")
-    print(f"이미 생성된 파일: {len(generated_files)}개\n")
-    
-    llm = get_llm()
-    
-    system_prompt = """
-당신은 **Spring Boot 전문 개발자**입니다.
-
-주어진 명세서와 파일 정보를 바탕으로 **단일 파일의 완전한 코드**를 생성하는 것이 당신의 임무입니다.
-
-## 핵심 작업
-
-### 1. 현재 파일만 생성
-- 주어진 파일 하나만 집중
-- 파일 타입에 맞는 구현:
-  - **Entity**: JPA 엔티티 (@Entity, @Id, Lombok)
-  - **Repository**: Spring Data JPA 인터페이스
-  - **DTO**: Request/Response 객체 (Validation 포함)
-  - **Service**: 비즈니스 로직 (@Service, @Transactional)
-  - **Controller**: REST API 엔드포인트
-  - **Exception**: 커스텀 예외, 글로벌 핸들러
-
-### 2. 이미 생성된 파일 활용
-- 의존하는 파일들의 코드 참조
-- 클래스명, 패키지명, 스타일 일관성 유지
-- 타입 호환성 보장
-
-### 3. 명세서 준수
-- API 시그니처 정확히 구현
-- HTTP 메서드, 경로, 요청/응답 형식 일치
-
-### 4. 코드 품질
-- Spring Boot 베스트 프랙티스
-- 적절한 예외 처리
-- Validation 어노테이션
-- 깔끔하고 자명한 코드
-
-## 출력 형식
-- SingleFileGeneration 모델로 출력
-- file_name, file_path, code_content
-- 완전한 Java 코드 (import부터 끝까지)
-
-## 중요 원칙
-1. **완전성**: 모든 import, 어노테이션, 메서드 포함
-2. **일관성**: 기존 파일들과 스타일 일치
-3. **실행 가능성**: 컴파일 가능한 코드
-4. **집중**: 현재 파일만 생성
-"""
-    
-    # 의존 파일 컨텍스트
-    dependency_context = ""
-    if next_file.get("dependencies") and generated_files:
-        dependency_context = "\n\n### 참고: 의존하는 파일들\n"
-        for dep_name in next_file["dependencies"]:
-            for gen_file in generated_files:
-                if gen_file["file_name"] == dep_name:
-                    dependency_context += f"\n// {gen_file['file_name']}\n"
-                    dependency_context += f"{gen_file['code_content'][:800]}...\n"
-                    break
-    
-    # 생성된 파일 요약
-    generated_summary = ""
-    if generated_files:
-        generated_summary = f"\n\n### 이미 생성된 파일 ({len(generated_files)}개):\n"
-        for gf in generated_files:
-            generated_summary += f"- {gf['file_name']} ({gf['file_path']})\n"
-    
-    prompt = ChatPromptTemplate([
-        ("system", system_prompt),
-        ("human", """
-다음 파일을 생성해주세요.
-
-생성할 파일:
-- 파일명: {file_name}
-- 경로: {file_path}
-- 설명: {description}
-반드시 다음 시그니처를 준수하라.
-{signature}
-{generated_summary}
-{dependency_context}
-
-위 정보를 바탕으로 {file_name} 파일의 완전한 코드를 생성해주세요.
-""")
-    ])
-    
-    chain = prompt | llm.with_structured_output(SingleFileGeneration, include_raw=True)
-    
     response = chain.invoke({
-        "file_name": next_file["file_name"],
-        "file_path": next_file["file_path"],
-        "signature": next_file["signature"],
-        "description": next_file["description"],
-        "generated_summary": generated_summary,
-        "dependency_context": dependency_context
+        "user_request": requirement_analysis_result,
+        "application_yml": application_yml
     })
     
-    file_gen = response["parsed"]
+    result = response["parsed"]
     raw_message = response["raw"]
     
-    print(f"✅ 파일 생성 완료")
-    print(f"  - 파일: {file_gen.file_name}")
-    print(f"  - 코드 길이: {len(file_gen.code_content)} 자\n")
+    all_skeleton_list = result.skeleton_code_list
 
-    print(f"📋 생성된 코드:")
-    print(f"  - {file_gen.code_content}")
+    result_list = [sc.file_path for sc in all_skeleton_list]
+    result_list = "\n".join(result_list)
+
+    completed_skeleton_list = [sc for sc in all_skeleton_list if sc.need_to_generate is False]
+    skeleton_code_list = [sc for sc in all_skeleton_list if sc.need_to_generate is True]
+    
+    completed_code = {
+        sc.file_path: {
+            "file_name": sc.file_name,
+            "file_path": sc.file_path,
+            "code_content": sc.skeleton_code
+        }
+        for sc in completed_skeleton_list
+    }
+
+    generated_files = state.get("generated_files", {})
+    generated_files = {**generated_files, **completed_code}
+
+    # need_to_generate가 True인 것들만 skeleton에 포함
+    skeleton = {
+        sc.file_path: {
+            "file_name": sc.file_name,
+            "file_path": sc.file_path,
+            "skeleton_code": sc.skeleton_code
+        }
+        for sc in skeleton_code_list
+    }
+
+    all_skeleton = {
+        sc.file_path: {
+            "file_name": sc.file_name,
+            "file_path": sc.file_path,
+            "skeleton_code": sc.skeleton_code
+        }
+        for sc in all_skeleton_list
+    }
+
+    print(f"✅ 스켈레톤 코드 생성 완료")
+    print(result_list)
     print("="*80)
     
-    # 생성된 파일 추가
-    new_file = {
-        "file_name": file_gen.file_name,
-        "file_path": file_gen.file_path,
-        "code_content": file_gen.code_content,
-        "description": next_file["description"]
-    }
-    
-    updated_generated_files = generated_files + [new_file]
-    current_index = state.get("current_file_index", 0)
-
     token_usage_list = state.get("token_usage_list", [])
-    token_usage = extract_token_usage(raw_message, "Code Generator Agent")
+    token_usage = extract_token_usage(raw_message, "Skeleton Code Generator Agent")
     token_usage_list.append(token_usage)
     
     return {
-        "pre_result": "generated: " + file_gen.file_name + ": " + next_file["description"],
-        "current_file_code": file_gen.code_content,
-        "generated_files": updated_generated_files,
-        "current_file_index": current_index + 1,
-        "current_status": "orchestrator",  # 오케스트라가 다음 판단
+        "generated_files": generated_files,
+        "skeleton_code_list": skeleton,
+        "token_usage_list": token_usage_list,
+        "all_skeleton": all_skeleton
+    }
+
+# ============================================
+# 3. Code File Generator Agent
+# ============================================
+
+async def _generate_single_file_async(file_info: dict, semaphore: asyncio.Semaphore) -> dict:
+    async with semaphore:  
+        print(f"🔄 생성 시작: {file_info['file_name']}")
+        
+        llm = get_llm()
+        
+        system_prompt = """
+            당신은 **Spring Boot 전문 개발자**입니다.
+
+            주어진 스켈레톤 코드를 바탕으로 **완전한 코드**를 생성하는 것이 당신의 임무입니다.
+
+            ## 핵심 작업
+
+            ### 1. 하나의 파일만 생성
+            - 주어진 스켈레톤 코드를 바탕으로 하나의 파일만 생성
+            - 주어진 스켈레톤 코드의 파일 명, 경로, 설명을 준수하라.
+            - 주어진 스켈레톤 코드의 기능(메서드)을 구현하라.
+
+            ### 2. 코드 품질
+            - Spring Boot 베스트 프랙티스
+            - 적절한 예외 처리
+            - Validation 어노테이션
+            - 깔끔하고 자명한 코드 구현
+
+            ## 출력 형식
+            - 완전한 Java 코드 (import부터 끝까지)
+            - 주석은 필요한 경우에만 간단히 작성하세요
+            - 코드 블록(```)을 사용하지 마세요
+            - 추가적인 설명이나 의견은 작성하지 말고, 코드만 작성하라.
+
+            ## 중요 원칙
+            1. **완전성**: 주어진 스켈레톤 코드의 기능(메서드)을 모두 구현.
+            2. **일관성**: 주어진 스켈레톤 코드의 파일 명, 메서드, 변수명, 경로 일치.
+            3. **실행 가능성**: 컴파일 가능한 코드 구현.
+        """
+            
+        prompt = ChatPromptTemplate([
+            ("system", system_prompt),
+            ("human", """
+                다음 스켈레톤 코드를 바탕으로 하나의 파일을 생성하라.
+
+                생성할 파일:
+                - 파일명: {file_name}
+                - 경로: {file_path}
+                - 스켈레톤 코드
+                {skeleton_code}
+                """)
+        ])
+        
+        chain = prompt | llm
+        
+        # 동기 LLM 호출을 비동기 환경에서 실행
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: chain.invoke({
+                "file_name": file_info["file_name"],
+                "file_path": file_info["file_path"],
+                "skeleton_code": file_info["skeleton_code"]
+            })
+        )
+        
+        code_content = response.content
+        code_content = code_content.strip()
+        code_content = code_content.replace("```java", "").replace("```", "")
+        
+        print(f"✅ 생성 완료: {file_info['file_name']} ({len(code_content)} 자)")
+        
+        return {
+            "file": {
+                file_info["file_path"]: {
+                    "file_name": file_info["file_name"],
+                    "file_path": file_info["file_path"],
+                    "code_content": code_content,
+                },
+            },
+            "token_usage": extract_token_usage(response, f"Code Generator - {file_info['file_name']}")
+        }
+
+def code_file_generator_agent(state: AgenticCoderState) -> Dict[str, Any]:
+    """
+    역할: 다중 파일 코드 생성자 
+    입력: 생성할 파일 목록 (files_to_generate)
+    출력: 생성된 파일들
+    """
+    
+    print("\n" + "="*80)
+    print("💻 [Code File Generator Agent] 다중 파일 생성")
+    print("="*80)
+
+    skeleton = state.get("skeleton_code_list", {})
+    file_tasks = []
+    for _, content in skeleton.items():
+        file_tasks.append({
+            "file_name": content["file_name"],
+            "file_path": content["file_path"],
+            "skeleton_code": content["skeleton_code"]
+        })
+
+    async def _run_parallel_generation():
+        semaphore = asyncio.Semaphore(10)
+        tasks = [
+            _generate_single_file_async(task, semaphore) for task in file_tasks
+        ]
+        return await asyncio.gather(*tasks)
+    
+    # 이벤트 루프 실행
+    results = asyncio.run(_run_parallel_generation())
+    
+    # 결과 수집
+    new_files = {
+        file_info["file_path"]: file_info
+        for r in results
+        for file_info in r["file"].values()
+    }
+
+    generated_files = state.get("generated_files", {})  # setup_project에서 생성한 설정 파일들
+    merged_files = {**generated_files, **new_files}
+    
+    token_usages = [r["token_usage"] for r in results]
+    
+    token_usage_list = state.get("token_usage_list", [])
+    token_usage_list.extend(token_usages)
+    
+    print(f"\n✅ 전체 파일 생성 완료: {len(merged_files)}개")
+    for _, f in merged_files.items():
+        print(f"   - {f['file_name']} : {f['file_path']}")
+    
+    return {
+        "generated_files": merged_files,
         "token_usage_list": token_usage_list
     }
 
-
 # ============================================
-# 3. Static Reviewer Agent
+# 4. File Writer Node (파일 생성 노드)
 # ============================================
 
-def static_reviewer_agent(state: AgenticCoderState) -> Dict[str, Any]:
+def file_writer_node(state: AgenticCoderState) -> Dict[str, Any]:
     """
-    역할: 정적 분석 및 리뷰어
-    입력: 생성된 코드
-    출력: 리뷰 결과 (이슈 목록, 통과 여부)
+    역할: 생성된 코드를 파일 시스템에 저장
+    입력: generated_files (메모리상의 코드)
+    출력: 파일 시스템에 저장된 파일들
     
     주요 작업:
-    - 코드 정적 분석
-    - 잠재적 버그 탐지 (Null Pointer, Resource Leak 등)
-    - 보안 취약점 검사
-    - 코드 스멜 탐지
-    - 베스트 프랙티스 준수 여부
-    - 개선 제안
+    - generated_files의 모든 파일을 실제 파일 시스템에 생성
     """
     print("\n" + "="*80)
-    print("🔍 [Static Reviewer Agent] 정적 리뷰 시작")
+    print("📁 [File Writer Agent] 파일 시스템에 파일 생성")
     print("="*80)
+
+    # 프로젝트 디렉토리 생성
+    project_uuid = str(uuid.uuid4())
+    zip_src = Path(__file__).parent.parent / "springTemplate" / "demo.zip"    
+    project_dir = Path(__file__).parent.parent.parent
+    dest_dir = project_dir / "generated" / project_uuid
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_src, "r") as zip_ref:
+        zip_ref.extractall(dest_dir)
     
-    generated_files = state.get("generated_files", [])
-    
+    generated_files = state.get("generated_files", {})
+
     if not generated_files:
-        print("⚠️ 리뷰할 파일이 없습니다.")
-        return {"current_status": "completed"}
+        print("⚠️ 생성할 파일이 없습니다.")
+        return {}
     
-    print(f"리뷰할 파일 수: {len(generated_files)}개\n")
+    project_dir_path = dest_dir
+    print(f"📂 프로젝트 디렉토리: {project_dir_path}\n")
     
-    # 모든 코드를 하나로 합치기
-    all_code = ""
-    for file in generated_files:
-        all_code += f"\n\n{'='*80}\n"
-        all_code += f"파일: {file['file_path']}/{file['file_name']}\n"
-        all_code += f"{'='*80}\n"
-        all_code += file['code_content']
+    created_count = 0
+    for _, file_info in generated_files.items():
+        if file_info["file_path"]:
+            full_file_path = project_dir_path / file_info["file_path"]
+        
+            create_file(full_file_path, file_info["code_content"])
+        
+        # 출력용 경로 표시
+        display_path = file_info["file_path"] if file_info["file_path"] else "."
+        print(f"   ✓ 생성 완료: {display_path}/{file_info['file_name']}")
+        created_count += 1
     
-    llm = get_llm()
+    print(f"\n✅ 총 {created_count}개 파일 생성 완료!\n")
+
+    all_skeleton = state.get("all_skeleton", {})
+    for _, content in all_skeleton.items():
+        if content["file_path"]:
+            full_file_path = project_dir_path / "skeleton" / content["file_path"]
+            create_file(full_file_path, content["skeleton_code"])
+        print(f"   - {content['file_path']}")
     
-    system_prompt = """
-당신은 **시니어 Java/Spring Boot 개발자이자 코드 리뷰 전문가**입니다.
-
-생성된 코드를 **정적으로 분석하고 리뷰**하는 것이 당신의 임무입니다.
-
-## 검사 항목
-
-### 1. 잠재적 버그 (CRITICAL/MAJOR)
-- **NullPointerException 위험**
-  - Optional 처리 누락
-  - Null 체크 없는 메서드 호출
-  - findById(), orElseThrow() 등 적절한 처리 여부
-  
-- **Resource Leak**
-  - Stream, Connection 등 리소스 정리
-  
-- **동시성 이슈**
-  - Thread-safety 문제
-  - 공유 상태 관리
-
-### 2. 보안 취약점 (CRITICAL/MAJOR)
-- **SQL Injection**: JPQL, Native Query 검사
-- **인증/인가 누락**: 보안이 필요한 API에 @PreAuthorize 등 누락
-- **민감 정보 노출**: 비밀번호 평문 저장, 로그에 민감정보 출력
-- **CSRF, XSS 대응**
-
-### 3. Spring Boot 베스트 프랙티스 (MAJOR/MINOR)
-- **의존성 주입**: 생성자 주입 사용 (필드 주입 지양)
-- **트랜잭션**: @Transactional 적절한 위치 및 옵션
-- **예외 처리**: Custom Exception, @ControllerAdvice 활용
-- **Validation**: @Valid, @NotNull 등 적절한 사용
-- **Layered Architecture**: 레이어 간 책임 분리
-
-### 4. 코드 스멜 (MINOR/INFO)
-- **긴 메서드**: 메서드가 너무 긴 경우
-- **중복 코드**: 반복되는 로직
-- **매직 넘버/문자열**: 상수화 필요
-- **과도한 결합도**: 클래스 간 의존성 과다
-
-### 5. 명명 및 컨벤션 (MINOR)
-- **명명 규칙**: 클래스, 메서드, 변수명 적절성
-- **Java 컨벤션**: Camel Case, Pascal Case 등
-
-## 심각도 분류
-- **CRITICAL**: 즉시 수정 필요 (보안, 치명적 버그)
-- **MAJOR**: 반드시 수정 권장 (잠재적 버그, 중요 베스트 프랙티스)
-- **MINOR**: 개선 권장 (코드 품질, 가독성)
-- **INFO**: 참고사항 (최적화 제안 등)
-
-## 리뷰 통과 기준
-- CRITICAL 이슈: 0개
-- MAJOR 이슈: 3개 이하
-- 위 기준을 만족하면 passed=True, 아니면 passed=False
-
-## 출력 형식
-- 주어진 Pydantic 모델(StaticReviewResult) 형식으로 출력
-- 각 이슈는 CodeIssue 형식으로 구조화
-- 구체적인 파일명, 줄 번호(가능한 경우), 이슈 설명, 개선 제안 포함
-
-## 중요 원칙
-1. **구체성**: "문제가 있습니다" X, "UserService.java의 findById() 호출 시 null 체크 누락" O
-2. **실용성**: 사소한 이슈보다 중요한 이슈에 집중
-3. **건설적**: 비판보다는 개선 제안 중심
-4. **정확성**: 실제 문제만 지적, 오탐 최소화
-"""
-    
-    prompt = ChatPromptTemplate([
-        ("system", system_prompt),
-        ("human", """
-다음 생성된 코드를 정적으로 분석하고 리뷰해주세요.
-
-생성된 코드:
-{generated_code}
-
-모든 잠재적 이슈를 찾아내고, 심각도를 평가하며, 구체적인 개선 제안을 제공해주세요.
-""")
-    ])
-    
-    chain = prompt | llm.with_structured_output(StaticReviewResult, include_raw=True)
-    
-    response = chain.invoke({"generated_code": all_code})
-    
-    review_result = response["parsed"]
-    raw_message = response["raw"]
-    
-    print(f"✅ 정적 리뷰 완료")
-    print(f"  - 통과 여부: {'✅ PASS' if review_result.passed else '❌ FAIL'}")
-    print(f"  - 발견된 이슈: {len(review_result.issues)}개")
-    print(f"  - 요약: {review_result.summary}\n")
-    
-    if review_result.issues:
-        print("🔍 발견된 이슈:")
-        for issue in review_result.issues:
-            severity_emoji = {
-                "CRITICAL": "🔴",
-                "MAJOR": "🟠",
-                "MINOR": "🟡",
-                "INFO": "🔵"
-            }.get(issue.severity, "⚪")
-            
-            location = f"{issue.file_name}"
-            if issue.line_number:
-                location += f":{issue.line_number}"
-            
-            print(f"  {severity_emoji} [{issue.severity}] {location}")
-            print(f"     {issue.issue_type}: {issue.description}")
-            if issue.suggestion:
-                print(f"     💡 제안: {issue.suggestion}")
-            print()
-    
-    if review_result.recommendations:
-        print("📌 전반적인 개선 권장사항:")
-        for rec in review_result.recommendations:
-            print(f"  - {rec}")
-    
-    # 리뷰 결과 반환 (다음 행동은 오케스트라가 결정)
-    print(f"\n📋 리뷰 완료. 오케스트라에게 결과 전달...")
-    
-    token_usage_list = state.get("token_usage_list", [])
-    token_usage = extract_token_usage(raw_message, "Static Reviewer Agent")
-    token_usage_list.append(token_usage)
-    
-    return {
-        "review_result": review_result.model_dump_json(indent=2),
-        "review_passed": review_result.passed,
-        "issues_found": [f"[{issue.severity}] {issue.file_name}: {issue.description}" 
-                        for issue in review_result.issues],
-        "current_status": "orchestrator",  # 오케스트라가 다음 결정
-        "code_files": generated_files,  # 최종 결과 저장
-        "retry_count": state.get("retry_count", 0) + 1,
-        "token_usage_list": token_usage_list
-    }
-
+    return {}
