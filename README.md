@@ -18,8 +18,10 @@ OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
 ```
 
 #### 1.1 시스템 환경 변수 설정
-시스템 환경 변수 Path에 ai.bat의 경로 추가
-이후 터미널에서 ai 입력하여 실행 가능
+시스템 환경 변수 Path에 ai.bat의 경로를 추가하여 어디서든 실행가능:
+```bash
+ai
+```
 
 ### 2. 의존성 설치
 `requirements.txt`에 명시된 모든 Python 의존성을 설치합니다:
