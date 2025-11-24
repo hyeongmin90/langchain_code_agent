@@ -15,6 +15,9 @@ def get_char_width(char):
 
 def wrap_text_wide(text, width):
     """한글 너비를 고려하여 텍스트를 줄바꿈합니다."""
+
+    text = text.expandtabs(4)
+    
     lines = []
     current_line = []
     current_width = 0
