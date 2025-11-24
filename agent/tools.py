@@ -22,15 +22,13 @@ def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
     app = context.app_instance
     if app and app.auto_approve_mode:
-        print(f"{Fore.GREEN}[자동 승인] {prompt}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[자동 승인]\n {prompt}{Style.RESET_ALL}")
         return True
     
     with approval_lock:
-        print(f"\n\n{get_separator_line(char='=', color=Fore.YELLOW, length=80)}")
-        print(f"[승인 요청] 다음 작업을 실행하려 합니다:")
-        print(f"   {Fore.CYAN}{prompt}{Style.RESET_ALL}")
-        print(get_separator_line(char='=', color=Fore.YELLOW, length=80))
-        
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
+        print(f"\n{Style.BRIGHT}{Fore.YELLOW}{prompt}{Style.RESET_ALL}")
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         approval = input(f"\n{Fore.YELLOW}실행하시겠습니까? (y/n): {Style.RESET_ALL}").strip().lower()
         return approval == 'y'
 
@@ -125,7 +123,7 @@ def write_file(filename: str, content: str) -> str:
     if not is_safe_path(filename, BASE_DIR):
         return "보안 경고: 작업 디렉토리 외부에 파일을 쓸 수 없습니다."
     target = (BASE_DIR / filename).resolve()
-    if not _request_approval(f"파일 쓰기: {Fore.CYAN}{str(target)}{Fore.YELLOW}"):
+    if not _request_approval(f"Write File: {str(target)}"):
         return "사용자가 파일 쓰기를 거부했습니다."
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -142,8 +140,11 @@ def edit_file(filename: str, target_text: str, replacement_text: str) -> str:
     target_path = (BASE_DIR / filename).resolve()
     if not target_path.exists(): return "오류: 파일이 존재하지 않습니다."
 
-    prompt_content = f"파일 수정: {Fore.CYAN}{filename}{Style.RESET_ALL}\n\n" \
-                     f"{Fore.RED}" + "\n-".join(wrap_text_wide(target_text, 70)) + f"{Style.RESET_ALL}\n\n" \
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}Edit File{Style.RESET_ALL} {filename}")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    
+    prompt_content = f"{Fore.RED}" + "\n-".join(wrap_text_wide(target_text, 70)) + f"{Style.RESET_ALL}\n\n" \
                      f"{Fore.GREEN}" + "\n+".join(wrap_text_wide(replacement_text, 70)) + Style.RESET_ALL
 
     if not _request_approval(prompt_content):
@@ -157,6 +158,9 @@ def edit_file(filename: str, target_text: str, replacement_text: str) -> str:
         return f"수정 완료: {filename}"
     except Exception as e:
         return f"수정 오류: {e}"
+    finally:
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+
 
 def _decode_bytes_output(output_bytes: bytes) -> str:
     if not output_bytes: return ""
@@ -171,12 +175,16 @@ def run_terminal_command(command: str) -> str:
     터미널 명령어를 실행합니다.
     실행 중 마지막 10줄을 실시간으로 표시합니다.
     """
-    
+
     danger_patterns = ["rm -rf /", "rm -rf", "sudo", "mkfs", ":(){ :|:& };:"]
     if any(pat in command.lower() for pat in danger_patterns):
         return "보안 경고: 위험한 명령어 패턴이 감지되어 실행이 차단되었습니다."
+        
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}RunTerminalCommand{Style.RESET_ALL}")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
 
-    if not _request_approval(f"명령어 실행: {Fore.CYAN}{command}{Fore.RED}"):
+    if not _request_approval(f"Run: {command}"):
         return "사용자가 명령 실행을 거부했습니다."
 
     app = context.app_instance
@@ -245,7 +253,7 @@ def run_terminal_command(command: str) -> str:
             return f"{partial_output}\n...\n 백그라운드 전환 (PID: {process.pid})\n 로그 확인: view_last_terminal_log 도구 사용"
         
         else:
-            time.sleep(1.0)
+            time.sleep(0.1)
             viewer.update()
             
             return_code = process.returncode
@@ -303,6 +311,10 @@ def view_last_terminal_log(lines: int = 50) -> str:
         
         if not content.strip():
             content = "(출력 없음)"
+
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        print(f"\n{Style.BRIGHT}ViewLastTerminalLog{Style.RESET_ALL}")
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
         
         return content
         

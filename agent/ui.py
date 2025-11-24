@@ -119,12 +119,11 @@ class PreviewHandler:
     def _print_header(self):
         if self.header_printed:
             return
-        safe_width = min(self.cols, 80)
-        title = f"작성 중: {self.filename}" if self.filename else "파일 미리보기"
+        title = f"{self.filename}" if self.filename else f"File Preview"
         
-        print(get_separator_line(length=safe_width))
-        print(f"{Fore.CYAN}{title} {Style.RESET_ALL}")
-        print(get_separator_line(length=safe_width))
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        print(f"\n{Style.BRIGHT}Write File{Style.RESET_ALL} {title}")
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
         
         self.header_printed = True
 
@@ -132,7 +131,6 @@ class PreviewHandler:
         if not self.header_printed:
             return
             
-        safe_width = min(self.cols, 80)
         display_width = self.cols - 6
         
         # 이전 출력 지우기
@@ -162,7 +160,7 @@ class PreviewHandler:
             mark_str = f"{Fore.CYAN}{line_mark:>4}{Style.RESET_ALL}" if line_mark != "." else f"{Fore.BLACK}{line_mark:>4}{Style.RESET_ALL}"
             print(f"{mark_str}│ {Fore.YELLOW}{display_line}{Style.RESET_ALL}")
             
-        print(get_separator_line(length=safe_width), flush=True)
+        print(get_separator_line(char='─', color=Fore.WHITE), flush=True)
         
         # 다음 업데이트를 위해 출력한 줄 수 저장
         self.last_printed_lines = len(visual_lines_with_info)
@@ -204,8 +202,7 @@ class PreviewHandler:
     def cancel_preview(self):
         if self.preview_active:
             self.preview_active = False
-            if self.header_printed:
-                print(f"\n{Fore.GREEN}작성 처리 완료{Style.RESET_ALL}\n")
+      
 
 
 # ==========================================
@@ -230,12 +227,11 @@ class TerminalOutputViewer:
     def start(self, command: str = ""):
         """뷰어 시작 및 헤더 출력"""
         self.active = True
-        safe_width = min(self.cols, 80)
-        print(f"\n{get_separator_line(length=safe_width)}")
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}실행 중...{Style.RESET_ALL}")
         if command:
             print(f"{Fore.WHITE}$ {command}{Style.RESET_ALL}")
-        print(get_separator_line(length=safe_width))
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
         
     def update(self):
         """로그 파일의 마지막 N줄을 읽어서 화면 갱신"""
@@ -289,13 +285,12 @@ class TerminalOutputViewer:
             return
             
         self.active = False
-        safe_width = min(self.cols, 80)
         
         if self.last_printed_lines > 0:
             # 마지막 출력 유지하고 구분선만 추가
             print()
         
-        print(get_separator_line(length=safe_width))
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
         if final_message:
             print(f"{final_message}")
         print()

@@ -138,10 +138,10 @@ class AgentApp:
                         preview_handler.start_session(tool_name=current_tool_name)
 
                 # 조용한 도구는 헤더를 출력하지 않음
-                silent_tools = ["read_file", "list_files, view_last_terminal_log"]
-                if current_tool_name and not tool_header_printed and current_tool_name not in silent_tools:
-                    print(f"\n{Back.YELLOW}{Fore.BLACK} 🔧 {current_tool_name} {Style.RESET_ALL}")
-                    tool_header_printed = True
+                # silent_tools = ["read_file", "list_files, view_last_terminal_log"]
+                # if current_tool_name and not tool_header_printed and current_tool_name not in silent_tools:
+                #     print(f"\n{Back.YELLOW}{Fore.BLACK} 🔧 {current_tool_name} {Style.RESET_ALL}")
+                #     tool_header_printed = True
                 
                 if preview_handler.preview_active:
                     preview_handler.handle_chunk(chunk)
