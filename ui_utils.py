@@ -199,26 +199,6 @@ class PreviewHandler:
             self._update_screen()
             self.last_preview_update = time.time()
 
-    def finish_preview(self, final_msg=None):
-        if not self.preview_active:
-            return
-        if not self.header_printed:
-            self._print_header()
-
-        final_text = self.full_value_content
-        if final_msg and hasattr(final_msg, 'tool_calls') and final_msg.tool_calls:
-            try:
-                args = final_msg.tool_calls[0].get("args", {})
-                if self.target_key in args:
-                    final_text = args[self.target_key]
-            except Exception:
-                pass
-        self.full_value_content = final_text
-        self._update_screen()
-
-        self.preview_active = False
-        total_lines = len(self.file_content_lines_info)
-        print(f"\n{Fore.GREEN}작성 완료 - 총 {total_lines}줄 (화면 기준){Style.RESET_ALL}\n")
 
     def cancel_preview(self):
         if self.preview_active:

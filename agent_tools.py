@@ -7,19 +7,20 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 from colorama import Fore, Style
-
-# 공유 컨텍스트 및 유틸리티 함수 import
-from agent_context import app_instance, approval_lock, BASE_DIR
+import agent_context
+from agent_context import approval_lock, BASE_DIR
 from agent_utils import is_safe_path, check_esc_pressed, UserInterruptedException, clear_key_buffer
-from ui_utils import get_separator_line, wrap_text_wide # wrap_text_wide 추가
+from ui_utils import get_separator_line, wrap_text_wide
 
 # ==========================================
 # 도구(Tools) 정의 및 관련 헬퍼
 # ==========================================
 
+
 def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
-    if app_instance and app_instance.auto_approve_mode:
+    app = agent_context.app_instance
+    if app and app.auto_approve_mode:
         print(f"{Fore.GREEN}[자동 승인] {prompt}{Style.RESET_ALL}")
         return True
     
@@ -181,8 +182,7 @@ def run_terminal_command(command: str, background: bool = False) -> str:
     if not _request_approval(f"명령어 실행: {Fore.CYAN}{command}{Fore.RED}"):
         return "사용자가 명령 실행을 거부했습니다."
 
-    if app_instance:
-        app_instance.clear_key_buffer()
+    app = agent_context.app_instance
 
     print(f"   실행 중... {("백그라운드" if background else "")}")
 
@@ -209,8 +209,8 @@ def run_terminal_command(command: str, background: bool = False) -> str:
             if not output and not error: response += "(성공/출력 없음)"
             return response
     except UserInterruptedException as e:
-        if app_instance: 
-            app_instance.user_interrupted = True
+        if app: 
+            app.user_interrupted = True
             clear_key_buffer()
         return "사용자가 명령어 실행을 중단했습니다."
     except Exception as e:

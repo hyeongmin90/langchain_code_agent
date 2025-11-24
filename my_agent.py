@@ -1,9 +1,3 @@
-"""
-Code Agent (Synchronous & Multi-Step)
-- langchain.agents.create_agent 기반
-- 파일 시스템 제어 (목록, 읽기, 쓰기, 편집) 및 터미널 명령어 실행
-- 동기 실행 + 자체 계획 및 연속적인 도구 호출
-"""
 import shutil
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
@@ -12,7 +6,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from dotenv import load_dotenv
 from colorama import init, Fore, Back, Style
 
-# 분리된 모듈 import
 import agent_context
 from agent_utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
 from agent_tools import AGENT_TOOLS
@@ -38,7 +31,6 @@ if platform.system() == "Windows":
 # ==========================================
 class AgentApp:
     def __init__(self):
-        # 전역 컨텍스트에 현재 인스턴스 설정
         agent_context.app_instance = self
         
         self.auto_approve_mode = False
@@ -156,9 +148,6 @@ class AgentApp:
                 
                 if isinstance(msg, AIMessageChunk) and msg.tool_call_chunks:
                     _handle_tool_call_chunk(msg)
-                elif hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    preview_handler.finish_preview(final_msg=msg)
-                    current_tool_name = None
                 elif isinstance(msg, AIMessageChunk) and msg.content and not msg.tool_call_chunks:
                     if not ai_response_started:
                         print_ai_response_start()
@@ -166,16 +155,6 @@ class AgentApp:
                     print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
                 elif msg.__class__.__name__ == 'ToolMessage':
                     preview_handler.cancel_preview()
-                    tool_result_id = getattr(msg, 'tool_call_id', None)
-                    
-                    # 조용한 도구는 결과를 출력하지 않음
-                    silent_tools = ["read_file", "list_files"]
-                    tool_name = getattr(msg, 'name', current_tool_name)
-                    
-                    if tool_result_id and tool_result_id not in seen_tool_results:
-                        if tool_name not in silent_tools:
-                            print_tool_result(msg.content)
-                        seen_tool_results.add(tool_result_id)
                     ai_response_started = False
 
             if ai_response_started: print()
