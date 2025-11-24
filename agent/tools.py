@@ -189,18 +189,20 @@ def run_terminal_command(command: str) -> str:
 
     app = context.app_instance
 
-    # 로그 폴더 생성 (코드 경로에)
     log_dir = CODE_DIR / "temp_logs"
     log_dir.mkdir(exist_ok=True)
     
-    # 고정된 파일명으로 덮어쓰기
     log_path = log_dir / "latest.log"
     
     try:
-        # 바이너리 모드로 로그 파일 저장
+        if platform.system() == "Windows" and not command.lower().startswith("powershell"):
+            final_command = f"chcp 65001 >nul & {command}"
+        else:
+            final_command = command
+        
         with open(str(log_path), "wb") as log_file:
             process = subprocess.Popen(
-                command, 
+                final_command, 
                 shell=True, 
                 cwd=str(BASE_DIR), 
                 stdout=log_file, 
