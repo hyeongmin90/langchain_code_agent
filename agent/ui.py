@@ -17,7 +17,7 @@ def wrap_text_wide(text, width):
     """한글 너비를 고려하여 텍스트를 줄바꿈합니다."""
 
     text = text.expandtabs(4)
-    
+
     lines = []
     current_line = []
     current_width = 0
@@ -118,6 +118,7 @@ class PreviewHandler:
         self.full_value_content = ""
         self.last_preview_update = 0
         self.file_content_lines_info = []
+        self.last_printed_lines = 0
 
     def _print_header(self):
         if self.header_printed:
@@ -136,13 +137,7 @@ class PreviewHandler:
             
         display_width = self.cols - 6
         
-        # 이전 출력 지우기
-        if self.last_printed_lines > 0:
-            # 내용 줄 + 하단 구분선 1줄
-            print(f"\033[{self.last_printed_lines + 1}A", end='')
-            print(f"\r\033[J", end='') # 커서 위치부터 화면 끝까지 지우기
-
-        # 표시할 내용 계산
+        # 1. 표시할 내용 계산 (전체 데이터 가공)
         clean_content = self.full_value_content.replace("\\n", "\n").replace('\\"', '"')
         real_lines = clean_content.split('\n')
         visual_lines_with_info = []
@@ -156,16 +151,25 @@ class PreviewHandler:
             else:
                 visual_lines_with_info.append((str(logical_line_num), ''))
         
-        self.file_content_lines_info = visual_lines_with_info
+        start_index = 0
         
-        # 새 내용 출력
-        for line_mark, display_line in visual_lines_with_info:
+        if self.last_printed_lines > 0:
+            start_index = max(0, self.last_printed_lines - 1)
+            
+            lines_to_move_up = 2 if self.last_printed_lines >= 1 else 1
+            
+            print(f"\033[{lines_to_move_up}A", end='')
+            print(f"\r\033[J", end='')
+
+        for i in range(start_index, len(visual_lines_with_info)):
+            line_mark, display_line = visual_lines_with_info[i]
+            
             mark_str = f"{Fore.CYAN}{line_mark:>4}{Style.RESET_ALL}" if line_mark != "." else f"{Fore.BLACK}{line_mark:>4}{Style.RESET_ALL}"
             print(f"{mark_str}│ {Fore.YELLOW}{display_line}{Style.RESET_ALL}")
             
         print(get_separator_line(char='─', color=Fore.WHITE), flush=True)
         
-        # 다음 업데이트를 위해 출력한 줄 수 저장
+        self.file_content_lines_info = visual_lines_with_info
         self.last_printed_lines = len(visual_lines_with_info)
 
     def handle_chunk(self, chunk: dict):
@@ -178,7 +182,6 @@ class PreviewHandler:
             if match:
                 self.filename = match.group(1)
 
-        # 파일명이 있고, 헤더가 아직 출력되지 않았다면 출력
         if self.filename and not self.header_printed:
             self._print_header()
 
@@ -203,10 +206,13 @@ class PreviewHandler:
 
 
     def cancel_preview(self):
+        """미리보기 취소/종료 시 상태 정리"""
         if self.preview_active:
             self.preview_active = False
-      
-
+            if self.header_printed:
+                pass 
+            self.last_printed_lines = 0
+            self.file_content_lines_info = []
 
 # ==========================================
 # 터미널 출력 뷰어
