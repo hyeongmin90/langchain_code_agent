@@ -65,6 +65,7 @@ def print_welcome_message():
     print(f"   • 현재 상태 확인: {Fore.RED}/status{Fore.YELLOW}")
     print(f"   • 프로그램 종료: {Fore.RED}'quit', 'exit', '종료'{Fore.YELLOW} 입력\n")
 
+#Deprecated
 def print_tool_result(result: str):
     """도구 실행 결과를 구분선과 함께 출력합니다."""
     print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
@@ -118,12 +119,11 @@ class PreviewHandler:
     def _print_header(self):
         if self.header_printed:
             return
-        safe_width = min(self.cols, 80)
-        title = f"작성 중: {self.filename}" if self.filename else "파일 미리보기"
+        title = f"{self.filename}" if self.filename else f"File Preview"
         
-        print(get_separator_line(length=safe_width))
-        print(f"{Fore.CYAN}{title} {Style.RESET_ALL}")
-        print(get_separator_line(length=safe_width))
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        print(f"\n{Style.BRIGHT}Write File{Style.RESET_ALL} {title}")
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
         
         self.header_printed = True
 
@@ -131,7 +131,6 @@ class PreviewHandler:
         if not self.header_printed:
             return
             
-        safe_width = min(self.cols, 80)
         display_width = self.cols - 6
         
         # 이전 출력 지우기
@@ -161,7 +160,7 @@ class PreviewHandler:
             mark_str = f"{Fore.CYAN}{line_mark:>4}{Style.RESET_ALL}" if line_mark != "." else f"{Fore.BLACK}{line_mark:>4}{Style.RESET_ALL}"
             print(f"{mark_str}│ {Fore.YELLOW}{display_line}{Style.RESET_ALL}")
             
-        print(get_separator_line(length=safe_width), flush=True)
+        print(get_separator_line(char='─', color=Fore.WHITE), flush=True)
         
         # 다음 업데이트를 위해 출력한 줄 수 저장
         self.last_printed_lines = len(visual_lines_with_info)
@@ -199,29 +198,100 @@ class PreviewHandler:
             self._update_screen()
             self.last_preview_update = time.time()
 
-    def finish_preview(self, final_msg=None):
-        if not self.preview_active:
-            return
-        if not self.header_printed:
-            self._print_header()
-
-        final_text = self.full_value_content
-        if final_msg and hasattr(final_msg, 'tool_calls') and final_msg.tool_calls:
-            try:
-                args = final_msg.tool_calls[0].get("args", {})
-                if self.target_key in args:
-                    final_text = args[self.target_key]
-            except Exception:
-                pass
-        self.full_value_content = final_text
-        self._update_screen()
-
-        self.preview_active = False
-        total_lines = len(self.file_content_lines_info)
-        print(f"\n{Fore.GREEN}작성 완료 - 총 {total_lines}줄 (화면 기준){Style.RESET_ALL}\n")
 
     def cancel_preview(self):
         if self.preview_active:
             self.preview_active = False
-            if self.header_printed:
-                print(f"\n{Fore.GREEN}작성 처리 완료{Style.RESET_ALL}\n")
+      
+
+
+# ==========================================
+# 터미널 출력 뷰어
+# ==========================================
+
+class TerminalOutputViewer:
+    """터미널 명령어 실행 시 로그 파일의 마지막 N줄을 실시간으로 보여주는 클래스"""
+    def __init__(self, log_path: str, max_lines: int = 10, update_interval: float = 0.2):
+        self.log_path = log_path
+        self.max_lines = max_lines
+        self.update_interval = update_interval
+        self.last_update = 0
+        self.last_printed_lines = 0
+        self.active = False
+        
+        try:
+            self.cols, _ = shutil.get_terminal_size()
+        except OSError:
+            self.cols = 80
+        
+    def start(self, command: str = ""):
+        """뷰어 시작 및 헤더 출력"""
+        self.active = True
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}실행 중...{Style.RESET_ALL}")
+        if command:
+            print(f"{Fore.WHITE}$ {command}{Style.RESET_ALL}")
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        
+    def update(self):
+        """로그 파일의 마지막 N줄을 읽어서 화면 갱신"""
+        if not self.active:
+            return
+            
+        current_time = time.time()
+        if current_time - self.last_update < self.update_interval:
+            return
+            
+        try:
+            # 바이너리로 읽어서 자동 디코딩
+            with open(self.log_path, 'rb') as f:
+                content_bytes = f.read()
+            
+            # 자동 인코딩 감지
+            content = None
+            for encoding in ('utf-8', 'cp949', 'latin-1'):
+                try:
+                    content = content_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if content is None:
+                content = content_bytes.decode('utf-8', errors='replace')
+            
+            lines = content.split('\n')
+            last_n_lines = lines[-self.max_lines:] if len(lines) > self.max_lines else lines
+            
+            # 이전 출력 지우기
+            if self.last_printed_lines > 0:
+                print(f"\033[{self.last_printed_lines}A", end='')
+                print(f"\r\033[J", end='')
+            
+            # 새 내용 출력 (줄 번호 없이)
+            for line in last_n_lines:
+                print(f"{Fore.YELLOW}{line.rstrip()}{Style.RESET_ALL}")
+            
+            self.last_printed_lines = len(last_n_lines)
+            self.last_update = current_time
+            
+        except FileNotFoundError:
+            pass  # 로그 파일이 아직 생성되지 않음
+        except Exception:
+            pass  # 다른 에러 무시
+            
+    def stop(self, final_message: str = ""):
+        """뷰어 종료 및 최종 메시지 출력"""
+        if not self.active:
+            return
+            
+        self.active = False
+        
+        if self.last_printed_lines > 0:
+            # 마지막 출력 유지하고 구분선만 추가
+            print()
+        
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        if final_message:
+            print(f"{final_message}")
+        print()
+

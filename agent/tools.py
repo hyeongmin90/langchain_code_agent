@@ -3,32 +3,32 @@ import re
 import subprocess
 import platform
 import time
+import locale
 from pathlib import Path
 
 from langchain_core.tools import tool
 from colorama import Fore, Style
-
-# 공유 컨텍스트 및 유틸리티 함수 import
-from agent_context import app_instance, approval_lock, BASE_DIR
-from agent_utils import is_safe_path, check_esc_pressed, UserInterruptedException, clear_key_buffer
-from ui_utils import get_separator_line, wrap_text_wide # wrap_text_wide 추가
+from . import context
+from .context import approval_lock, BASE_DIR, CODE_DIR
+from .utils import is_safe_path, check_esc_pressed, UserInterruptedException, clear_key_buffer
+from .ui import get_separator_line, wrap_text_wide, TerminalOutputViewer
 
 # ==========================================
 # 도구(Tools) 정의 및 관련 헬퍼
 # ==========================================
 
+
 def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
-    if app_instance and app_instance.auto_approve_mode:
-        print(f"{Fore.GREEN}[자동 승인] {prompt}{Style.RESET_ALL}")
+    app = context.app_instance
+    if app and app.auto_approve_mode:
+        print(f"{Fore.GREEN}[자동 승인]\n {prompt}{Style.RESET_ALL}")
         return True
     
     with approval_lock:
-        print(f"\n\n{get_separator_line(char='=', color=Fore.YELLOW, length=80)}")
-        print(f"[승인 요청] 다음 작업을 실행하려 합니다:")
-        print(f"   {Fore.CYAN}{prompt}{Style.RESET_ALL}")
-        print(get_separator_line(char='=', color=Fore.YELLOW, length=80))
-        
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
+        print(f"\n{Style.BRIGHT}{Fore.YELLOW}{prompt}{Style.RESET_ALL}")
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         approval = input(f"\n{Fore.YELLOW}실행하시겠습니까? (y/n): {Style.RESET_ALL}").strip().lower()
         return approval == 'y'
 
@@ -123,7 +123,7 @@ def write_file(filename: str, content: str) -> str:
     if not is_safe_path(filename, BASE_DIR):
         return "보안 경고: 작업 디렉토리 외부에 파일을 쓸 수 없습니다."
     target = (BASE_DIR / filename).resolve()
-    if not _request_approval(f"파일 쓰기: {Fore.CYAN}{str(target)}{Fore.YELLOW}"):
+    if not _request_approval(f"Write File: {str(target)}"):
         return "사용자가 파일 쓰기를 거부했습니다."
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +140,11 @@ def edit_file(filename: str, target_text: str, replacement_text: str) -> str:
     target_path = (BASE_DIR / filename).resolve()
     if not target_path.exists(): return "오류: 파일이 존재하지 않습니다."
 
-    prompt_content = f"파일 수정: {Fore.CYAN}{filename}{Style.RESET_ALL}\n\n" \
-                     f"{Fore.RED}" + "\n-".join(wrap_text_wide(target_text, 70)) + f"{Style.RESET_ALL}\n\n" \
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}Edit File{Style.RESET_ALL} {filename}")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    
+    prompt_content = f"{Fore.RED}" + "\n-".join(wrap_text_wide(target_text, 70)) + f"{Style.RESET_ALL}\n\n" \
                      f"{Fore.GREEN}" + "\n+".join(wrap_text_wide(replacement_text, 70)) + Style.RESET_ALL
 
     if not _request_approval(prompt_content):
@@ -155,12 +158,9 @@ def edit_file(filename: str, target_text: str, replacement_text: str) -> str:
         return f"수정 완료: {filename}"
     except Exception as e:
         return f"수정 오류: {e}"
+    finally:
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
 
-def _adjust_command_for_windows(command: str) -> str:
-    if platform.system() == "Windows":
-        command = command.replace("./", "", 1) if command.startswith("./") else command
-        command = command.replace("gradlew", "gradlew.bat", 1) if command.startswith("gradlew") else command
-    return command
 
 def _decode_bytes_output(output_bytes: bytes) -> str:
     if not output_bytes: return ""
@@ -170,51 +170,157 @@ def _decode_bytes_output(output_bytes: bytes) -> str:
     return str(output_bytes)
 
 @tool
-def run_terminal_command(command: str, background: bool = False) -> str:
-    """터미널 명령어를 실행합니다."""
-    command = _adjust_command_for_windows(command)
-    
+def run_terminal_command(command: str) -> str:
+    """
+    터미널 명령어를 실행합니다.
+    실행 중 마지막 10줄을 실시간으로 표시합니다.
+    """
+
     danger_patterns = ["rm -rf /", "rm -rf", "sudo", "mkfs", ":(){ :|:& };:"]
     if any(pat in command.lower() for pat in danger_patterns):
         return "보안 경고: 위험한 명령어 패턴이 감지되어 실행이 차단되었습니다."
+        
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}RunTerminalCommand{Style.RESET_ALL}")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
 
-    if not _request_approval(f"명령어 실행: {Fore.CYAN}{command}{Fore.RED}"):
+    if not _request_approval(f"Run: {command}"):
         return "사용자가 명령 실행을 거부했습니다."
 
-    if app_instance:
-        app_instance.clear_key_buffer()
+    app = context.app_instance
 
-    print(f"   실행 중... {("백그라운드" if background else "")}")
-
+    # 로그 폴더 생성 (코드 경로에)
+    log_dir = CODE_DIR / "temp_logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    # 고정된 파일명으로 덮어쓰기
+    log_path = log_dir / "latest.log"
+    
     try:
-        if background:
-            log_filename = f"{command.split()[0]}_output.log"
-            log_path = BASE_DIR / log_filename
-            with open(str(log_path), "w", encoding="utf-8") as log_file:
-                process = subprocess.Popen(command, shell=True, cwd=str(BASE_DIR), stdout=log_file, stderr=subprocess.STDOUT)
-            return f"백그라운드 실행 시작 (PID: {process.pid}), 로그 파일: {log_path}"
+        # 바이너리 모드로 로그 파일 저장
+        with open(str(log_path), "wb") as log_file:
+            process = subprocess.Popen(
+                command, 
+                shell=True, 
+                cwd=str(BASE_DIR), 
+                stdout=log_file, 
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL
+            )
+
+        viewer = TerminalOutputViewer(str(log_path), max_lines=10)
+        viewer.start(command)
+        
+        MAX_DISPLAY_TIME = 10.0
+        start_time = time.time()
+        detached = False
+        
+        while process.poll() is None:
+            viewer.update()
+            
+            if check_esc_pressed():
+                process.terminate()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                
+                viewer.stop(f"{Fore.RED}사용자가 중단했습니다.{Style.RESET_ALL}")
+                clear_key_buffer()
+                
+                if app:
+                    app.user_interrupted = True
+                
+                raise UserInterruptedException("사용자가 명령어 실행을 중단했습니다.")
+            
+            if time.time() - start_time > MAX_DISPLAY_TIME:
+                detached = True
+                break
+            
+            time.sleep(0.1)
+        
+        if detached:
+            viewer.stop(f"{Fore.CYAN} 백그라운드 전환(PID: {process.pid}){Style.RESET_ALL}")
+            try:
+                with open(str(log_path), 'rb') as f:
+                    partial_output = _decode_bytes_output(f.read())
+            except:
+                partial_output = "(출력을 읽을 수 없습니다)"
+            
+            if app:
+                app.background_processes.append(process)
+            
+            return f"{partial_output}\n...\n 백그라운드 전환 (PID: {process.pid})\n 로그 확인: view_last_terminal_log 도구 사용"
+        
         else:
-            process = subprocess.Popen(command, shell=True, cwd=str(BASE_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            while process.poll() is None:
-                if check_esc_pressed():
-                    process.terminate()
-                    clear_key_buffer()  # 키 버퍼 정리
-                    raise UserInterruptedException("사용자가 명령어 실행을 중단했습니다.")
-                time.sleep(0.1)
-            out, err = process.communicate()
-            output, error = _decode_bytes_output(out), _decode_bytes_output(err)
-            response = f"명령: `{command}`\n"
-            if output: response += f"[출력]\n{output}\n"
-            if error: response += f"[에러]\n{error}\n"
-            if not output and not error: response += "(성공/출력 없음)"
-            return response
+            time.sleep(0.1)
+            viewer.update()
+            
+            return_code = process.returncode
+            status_color = Fore.GREEN if return_code == 0 else Fore.RED
+            
+            viewer.stop(f"{status_color} 실행 완료 (종료코드: {return_code}){Style.RESET_ALL}")
+            
+            try:
+                with open(str(log_path), 'rb') as f:
+                    output = _decode_bytes_output(f.read())
+            except:
+                output = "(출력을 읽을 수 없습니다)"
+            
+            if len(output) > 2000:
+                summary = f"...(생략)...\n{output[-2000:]}"
+            else:
+                summary = output if output else "(출력 없음)"
+            
+            return summary
+
     except UserInterruptedException as e:
-        if app_instance: 
-            app_instance.user_interrupted = True
-            clear_key_buffer()
+        if app:
+            app.user_interrupted = True
+        print("Debug: UserInterruptedException : ", e)
         return "사용자가 명령어 실행을 중단했습니다."
     except Exception as e:
         return f"실행 실패: {e}"
 
+@tool
+def view_last_terminal_log(lines: int = 50) -> str:
+    """
+    마지막으로 실행된 터미널 명령어의 로그를 확인합니다.
+    
+    Args:
+        lines: 마지막 N줄만 표시 (기본값: 50)
+    """
+    log_dir = CODE_DIR / "temp_logs"
+    log_path = log_dir / "latest.log"
+    
+    try:
+        if not log_path.exists():
+            return "아직 실행된 터미널 명령이 없습니다."
+        
+        # 바이너리로 읽어서 자동 디코딩
+        with open(log_path, 'rb') as f:
+            content = _decode_bytes_output(f.read())
+        
+        all_lines = content.split('\n')
+        
+        if len(all_lines) > lines:
+            selected_lines = all_lines[-lines:]
+            content = f"...(총 {len(all_lines)}줄 중 마지막 {lines}줄)\n" + "\n".join(selected_lines)
+        else:
+            content = "\n".join(all_lines)
+        
+        if not content.strip():
+            content = "(출력 없음)"
+
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        print(f"\n{Style.BRIGHT}ViewLastTerminalLog{Style.RESET_ALL}")
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        
+        return content
+        
+    except Exception as e:
+        return f"로그 읽기 실패: {e}"
+
 # 에이전트 생성 시 사용할 도구 목록
-AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command]
+AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, view_last_terminal_log]
+
