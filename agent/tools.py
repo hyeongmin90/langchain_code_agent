@@ -1,9 +1,8 @@
-import os
-import re
+
 import subprocess
 import platform
 import time
-import locale
+import shutil
 from pathlib import Path
 
 from langchain_core.tools import tool
@@ -27,7 +26,7 @@ def _request_approval(prompt: str) -> bool:
     
     with approval_lock:
         print(f"\n{get_separator_line(color=Fore.YELLOW)}")
-        print(f"\n{Style.BRIGHT}{Fore.YELLOW}{prompt}{Style.RESET_ALL}")
+        print(f"\n{prompt}")
         print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         approval = input(f"\n{Fore.YELLOW}실행하시겠습니까? (y/n): {Style.RESET_ALL}").strip().lower()
         return approval == 'y'
@@ -132,30 +131,76 @@ def write_file(filename: str, content: str) -> str:
     except Exception as e:
         return f"쓰기 오류: {e}"
 
+def format_diff_with_lines(start_line: int, old_text: str, new_text: str) -> str:
+    try:
+        cols, _ = shutil.get_terminal_size()
+    except:
+        cols = 80
+    
+    display_width = max(cols - 10, 40) 
+    result = []
+
+    old_lines = old_text.split('\n')
+    for i, line in enumerate(old_lines):
+        current_line_num = start_line + i
+        if line:
+            wrapped = wrap_text_wide(line, display_width)
+            for w_idx, w_line in enumerate(wrapped):
+                num_str = str(current_line_num) if w_idx == 0 else "."
+                result.append(f"{num_str:>4}│ {Fore.RED}- {w_line}{Style.RESET_ALL}")
+        else:
+            result.append(f"{current_line_num:>4}│ {Fore.RED}- {Style.RESET_ALL}")
+
+    result.append(get_separator_line(char='─', color=Fore.WHITE))
+
+    new_lines = new_text.split('\n')
+
+    for i, line in enumerate(new_lines):
+        current_line_num = start_line + i
+        if line:
+            wrapped = wrap_text_wide(line, display_width)
+            for w_idx, w_line in enumerate(wrapped):
+                num_str = str(current_line_num) if w_idx == 0 else "."
+                result.append(f"{num_str:>4}│ {Fore.GREEN}+ {w_line}{Style.RESET_ALL}")
+        else:
+            result.append(f"{current_line_num:>4}│ {Fore.GREEN}+{Style.RESET_ALL}")
+
+    return "\n".join(result)
+
 @tool
 def edit_file(filename: str, target_text: str, replacement_text: str) -> str:
     """파일의 특정 부분을 수정합니다."""
     if not is_safe_path(filename, BASE_DIR):
         return "보안 경고: 작업 디렉토리 외부 파일은 수정할 수 없습니다."
+    
     target_path = (BASE_DIR / filename).resolve()
     if not target_path.exists(): return "오류: 파일이 존재하지 않습니다."
 
-    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
-    print(f"\n{Style.BRIGHT}Edit File{Style.RESET_ALL} {filename}")
-    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
-    
-    prompt_content = f"{Fore.RED}" + "\n-".join(wrap_text_wide(target_text, 70)) + f"{Style.RESET_ALL}\n\n" \
-                     f"{Fore.GREEN}" + "\n+".join(wrap_text_wide(replacement_text, 70)) + Style.RESET_ALL
-
-    if not _request_approval(prompt_content):
-        return "사용자가 파일 수정을 거부했습니다."
     try:
         content = target_path.read_text(encoding='utf-8')
-        if content.count(target_text) != 1:
-            return f"오류: target_text가 {content.count(target_text)}번 발견. 유일한 항목을 지정해야 합니다."
+        
+        count = content.count(target_text)
+        if count == 0:
+            return "오류: 파일에서 target_text를 찾을 수 없습니다."
+        elif count > 1:
+            return f"오류: target_text가 {count}번 발견되었습니다. 더 긴 문맥을 사용하여 유일한 부분을 지정해주세요."
+
+        start_index = content.find(target_text)
+        start_line = content[:start_index].count('\n') + 1
+
+        print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+        print(f"\n{Style.BRIGHT}Edit File{Style.RESET_ALL} {filename}")
+        
+        prompt_content = format_diff_with_lines(start_line, target_text, replacement_text)
+
+        if not _request_approval(prompt_content):
+            return "사용자가 파일 수정을 거부했습니다."
+        
         new_content = content.replace(target_text, replacement_text)
         target_path.write_text(new_content, encoding='utf-8')
-        return f"수정 완료: {filename}"
+        
+        return f"수정 완료: {filename} ({start_line}번째 줄 수정됨)"
+
     except Exception as e:
         return f"수정 오류: {e}"
     finally:
@@ -189,18 +234,20 @@ def run_terminal_command(command: str) -> str:
 
     app = context.app_instance
 
-    # 로그 폴더 생성 (코드 경로에)
     log_dir = CODE_DIR / "temp_logs"
     log_dir.mkdir(exist_ok=True)
     
-    # 고정된 파일명으로 덮어쓰기
     log_path = log_dir / "latest.log"
     
     try:
-        # 바이너리 모드로 로그 파일 저장
+        if platform.system() == "Windows" and not command.lower().startswith("powershell"):
+            final_command = f"chcp 65001 >nul & {command}"
+        else:
+            final_command = command
+        
         with open(str(log_path), "wb") as log_file:
             process = subprocess.Popen(
-                command, 
+                final_command, 
                 shell=True, 
                 cwd=str(BASE_DIR), 
                 stdout=log_file, 
@@ -297,7 +344,6 @@ def view_last_terminal_log(lines: int = 50) -> str:
         if not log_path.exists():
             return "아직 실행된 터미널 명령이 없습니다."
         
-        # 바이너리로 읽어서 자동 디코딩
         with open(log_path, 'rb') as f:
             content = _decode_bytes_output(f.read())
         
@@ -321,6 +367,4 @@ def view_last_terminal_log(lines: int = 50) -> str:
     except Exception as e:
         return f"로그 읽기 실패: {e}"
 
-# 에이전트 생성 시 사용할 도구 목록
 AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, view_last_terminal_log]
-

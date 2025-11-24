@@ -15,6 +15,9 @@ def get_char_width(char):
 
 def wrap_text_wide(text, width):
     """한글 너비를 고려하여 텍스트를 줄바꿈합니다."""
+
+    text = text.expandtabs(4)
+    
     lines = []
     current_line = []
     current_width = 0
@@ -227,11 +230,11 @@ class TerminalOutputViewer:
     def start(self, command: str = ""):
         """뷰어 시작 및 헤더 출력"""
         self.active = True
-        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.YELLOW)}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}실행 중...{Style.RESET_ALL}")
         if command:
             print(f"{Fore.WHITE}$ {command}{Style.RESET_ALL}")
-        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.YELLOW)}{Style.RESET_ALL}")
         
     def update(self):
         """로그 파일의 마지막 N줄을 읽어서 화면 갱신"""
@@ -290,7 +293,7 @@ class TerminalOutputViewer:
             # 마지막 출력 유지하고 구분선만 추가
             print()
         
-        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.WHITE)}{Style.RESET_ALL}")
+        print(f"\n{Style.BRIGHT}{get_separator_line(color=Fore.YELLOW)}{Style.RESET_ALL}")
         if final_message:
             print(f"{final_message}")
         print()
