@@ -65,6 +65,7 @@ def print_welcome_message():
     print(f"   • 현재 상태 확인: {Fore.RED}/status{Fore.YELLOW}")
     print(f"   • 프로그램 종료: {Fore.RED}'quit', 'exit', '종료'{Fore.YELLOW} 입력\n")
 
+#Deprecated
 def print_tool_result(result: str):
     """도구 실행 결과를 구분선과 함께 출력합니다."""
     print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
@@ -298,3 +299,4 @@ class TerminalOutputViewer:
         if final_message:
             print(f"{final_message}")
         print()
+

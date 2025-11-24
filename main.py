@@ -7,13 +7,12 @@ from dotenv import load_dotenv
 from colorama import init, Fore, Back, Style
 import time
 
-import agent_context
+from agent import context as agent_context
 import queue
-from agent_utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
-from agent_tools import AGENT_TOOLS
-from ui_utils import (
+from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
+from agent.tools import AGENT_TOOLS
+from agent.ui import (
     PreviewHandler,
-    print_tool_result,
     print_ai_response_start,
     print_separator,
     print_welcome_message,
@@ -188,3 +187,4 @@ if __name__ == "__main__":
     load_dotenv()
     app = AgentApp()
     app.run()
+

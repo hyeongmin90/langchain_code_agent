@@ -32,7 +32,12 @@ pip install -r requirements.txt
 ### 3. 에이전트 실행
 애플리케이션의 메인 스크립트를 실행합니다:
 ```bash
-python my_agent.py
+python main.py
+```
+
+또는 배치 파일을 사용하여 실행:
+```bash
+ai.bat
 ```
 
 ## 사용법
@@ -46,6 +51,24 @@ python my_agent.py
 *   `/reset`: 현재 대화 기록을 초기화하고 새 세션을 시작합니다.
 *   `종료`, `quit`, `exit`, `q`: 에이전트 애플리케이션을 종료합니다.
 
+
+## 프로젝트 구조
+```
+langchainDev/
+├── agent/                  # 에이전트 패키지
+│   ├── __init__.py        # 패키지 초기화
+│   ├── context.py         # 전역 컨텍스트 및 설정
+│   ├── utils.py           # 유틸리티 함수들
+│   ├── ui.py              # UI 관련 함수들
+│   └── tools.py           # 에이전트 도구 정의
+├── temp_logs/             # 터미널 명령어 로그
+│   └── latest.log         # 최근 명령어 로그
+├── main.py                # 메인 실행 파일
+├── ai.bat                 # Windows 배치 실행 파일
+├── .env                   # 환경 변수 (API 키)
+├── requirements.txt       # Python 의존성
+└── README.md              # 프로젝트 문서
+```
 
 ## 참고
 이 에이전트는 개발 작업을 돕기 위해 강력한 파일 시스템 및 터미널 제어 기능을 가지고 있습니다.

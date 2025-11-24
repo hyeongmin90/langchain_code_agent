@@ -11,5 +11,6 @@ approval_lock = threading.Lock()
 # 프로젝트의 기본 작업 디렉토리 (명령어 실행 위치)
 BASE_DIR = Path.cwd()
 
-# 코드가 위치한 디렉토리 (로그 파일 저장용)
-CODE_DIR = Path(__file__).resolve().parent
+# 코드가 위치한 디렉토리 (로그 파일 저장용) - agent 폴더의 부모
+CODE_DIR = Path(__file__).resolve().parent.parent
+

@@ -44,3 +44,4 @@ def is_safe_path(path_str: str, base_dir: Path) -> bool:
         return base_dir == resolved_target or base_dir in resolved_target.parents
     except Exception:
         return False
+

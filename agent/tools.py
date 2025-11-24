@@ -8,10 +8,10 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 from colorama import Fore, Style
-import agent_context
-from agent_context import approval_lock, BASE_DIR, CODE_DIR
-from agent_utils import is_safe_path, check_esc_pressed, UserInterruptedException, clear_key_buffer
-from ui_utils import get_separator_line, wrap_text_wide, TerminalOutputViewer
+from . import context
+from .context import approval_lock, BASE_DIR, CODE_DIR
+from .utils import is_safe_path, check_esc_pressed, UserInterruptedException, clear_key_buffer
+from .ui import get_separator_line, wrap_text_wide, TerminalOutputViewer
 
 # ==========================================
 # 도구(Tools) 정의 및 관련 헬퍼
@@ -20,7 +20,7 @@ from ui_utils import get_separator_line, wrap_text_wide, TerminalOutputViewer
 
 def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
-    app = agent_context.app_instance
+    app = context.app_instance
     if app and app.auto_approve_mode:
         print(f"{Fore.GREEN}[자동 승인] {prompt}{Style.RESET_ALL}")
         return True
@@ -179,7 +179,7 @@ def run_terminal_command(command: str) -> str:
     if not _request_approval(f"명령어 실행: {Fore.CYAN}{command}{Fore.RED}"):
         return "사용자가 명령 실행을 거부했습니다."
 
-    app = agent_context.app_instance
+    app = context.app_instance
 
     # 로그 폴더 생성 (코드 경로에)
     log_dir = CODE_DIR / "temp_logs"
@@ -311,3 +311,4 @@ def view_last_terminal_log(lines: int = 50) -> str:
 
 # 에이전트 생성 시 사용할 도구 목록
 AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, view_last_terminal_log]
+
