@@ -5,8 +5,10 @@ from langchain_core.messages import HumanMessage, AIMessageChunk
 from langgraph.checkpoint.memory import InMemorySaver
 from dotenv import load_dotenv
 from colorama import init, Fore, Back, Style
+import time
 
 import agent_context
+import queue
 from agent_utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
 from agent_tools import AGENT_TOOLS
 from ui_utils import (
@@ -33,6 +35,7 @@ class AgentApp:
     def __init__(self):
         agent_context.app_instance = self
         
+        self.background_processes = []
         self.auto_approve_mode = False
         self.user_interrupted = False
         self.session_counter = 1
@@ -102,6 +105,14 @@ class AgentApp:
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}종료되었습니다.{Style.RESET_ALL}")
                 break
+            finally:
+                while self.background_processes:
+                    process = self.background_processes.pop(0)
+                    try:
+                        process.terminate()
+                        process.wait()
+                    except Exception as e:
+                        print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패: {e}{Style.RESET_ALL}\n")
     
     def chat(self, user_input: str):
         """에이전트와 동기적으로 채팅하고 스트리밍 출력을 처리합니다."""
@@ -114,7 +125,6 @@ class AgentApp:
         ai_response_started = False
         current_tool_name = None
         tool_header_printed = False
-        seen_tool_results = set()
 
         def _handle_tool_call_chunk(msg_chunk):
             nonlocal current_tool_name, tool_header_printed, ai_response_started
@@ -124,12 +134,12 @@ class AgentApp:
                     current_tool_name = chunk["name"]
                     tool_header_printed = False
                     ai_response_started = False
-                    # 파일 관련 도구인 경우, 미리보기 세션 시작
+                  
                     if current_tool_name in ["write_file"]:
                         preview_handler.start_session(tool_name=current_tool_name)
 
                 # 조용한 도구는 헤더를 출력하지 않음
-                silent_tools = ["read_file", "list_files"]
+                silent_tools = ["read_file", "list_files, view_last_terminal_log"]
                 if current_tool_name and not tool_header_printed and current_tool_name not in silent_tools:
                     print(f"\n{Back.YELLOW}{Fore.BLACK} 🔧 {current_tool_name} {Style.RESET_ALL}")
                     tool_header_printed = True
@@ -140,6 +150,7 @@ class AgentApp:
         try:
             for event in self.agent.stream({"messages": [HumanMessage(content=user_input)]}, config, stream_mode="messages"):
                 if self.user_interrupted or check_esc_pressed():
+                    time.sleep(1.0)
                     self.user_interrupted = True
                     clear_key_buffer()
                     raise UserInterruptedException("사용자가 응답을 중단했습니다.")
