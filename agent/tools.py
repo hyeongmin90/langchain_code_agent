@@ -219,7 +219,10 @@ def run_terminal_command(command: str, max_display_time: float = 10.0) -> str:
     """
     터미널 명령어를 실행한다.
     max_display_time 초 동안의 실행 로그를 반환하며, 초과시 백그라운드로 전환된다.
-    max_display_time: 최대 표시 시간 (기본값: 10.0초)
+
+    Args:
+        command: 실행할 터미널 명령어
+        max_display_time: 최대 표시 시간 (기본값: 10.0초)
     """
 
     danger_patterns = ["rm -rf /", "rm -rf", "sudo", "mkfs", ":(){ :|:& };:"]
@@ -324,8 +327,13 @@ def run_terminal_command(command: str, max_display_time: float = 10.0) -> str:
     except UserInterruptedException as e:
         if app:
             app.user_interrupted = True
-        print("Debug: UserInterruptedException : ", e)
-        return "사용자가 명령어 실행을 중단했습니다."
+        try:
+            with open(str(log_path), 'rb') as f:
+                interrupted_output = _decode_bytes_output(f.read())
+        except:
+            interrupted_output = "(출력을 읽을 수 없습니다)"
+
+        return f"{interrupted_output}\n...\n 사용자가 명령어 실행을 중단했습니다."
     except Exception as e:
         return f"실행 실패: {e}"
 
