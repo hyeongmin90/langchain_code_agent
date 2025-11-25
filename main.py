@@ -61,9 +61,8 @@ class AgentApp:
             "최대한 사용자에게 질문을 피하라. 최대한 자동으로 작업을 완료하라."
             "작업 시작 전 계획을 세우고, 순차적으로 도구를 사용하세요. 병렬 처리는 허용하지 않습니다."
             "모든 대화는 한국어로 진행합니다."
-            f"사용자 환경: {platform.system()}"
         )
-        # agent_tools.py에서 가져온 도구 목록 사용
+
         return create_agent(model=model, tools=AGENT_TOOLS, checkpointer=InMemorySaver(), system_prompt=system_prompt)
 
     def _handle_special_commands(self, user_input: str):
@@ -116,14 +115,18 @@ class AgentApp:
                 print(f"\n{Fore.YELLOW}종료되었습니다.{Style.RESET_ALL}")
                 self._log_message(f"APPLICATION: 종료되었습니다.")
                 break
-            finally:
-                while self.background_processes:
-                    process = self.background_processes.pop(0)
-                    try:
-                        process.terminate()
-                        process.wait()
-                    except Exception as e:
-                        print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패: {e}{Style.RESET_ALL}\n")
+            
+        while self.background_processes:
+            process = self.background_processes.pop(0)
+            self._log_message(f"BACKGROUND PROCESS TERMINATING: {process.pid}")
+            try:
+                process.terminate()
+                process.wait()
+                self._log_message(f"BACKGROUND PROCESS TERMINATED SUCCESSFULLY: {process.pid}")
+            except Exception as e:
+                print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패: {e}{Style.RESET_ALL}\n")
+                self._log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
+                
     
     def chat(self, user_input: str):
         """에이전트와 동기적으로 채팅하고 스트리밍 출력을 처리합니다."""
@@ -142,7 +145,7 @@ class AgentApp:
         def _handle_tool_call_chunk(msg_chunk):
             nonlocal current_tool_name, tool_header_printed, ai_response_started
             for chunk in msg_chunk.tool_call_chunks:
-                # 새 도구 호출 시작 감지
+                
                 if "name" in chunk and chunk["name"]:
                     current_tool_name = chunk["name"]
                     tool_header_printed = False
@@ -161,8 +164,9 @@ class AgentApp:
                 
                 msg, _ = event
                 
-            
-                if hasattr(msg, "content") and msg.content:
+                if msg.__class__.__name__ == 'ToolMessage':
+                    self._log_message(f"TOOL MESSAGE: {msg.content}")
+                elif hasattr(msg, "content") and msg.content:
                     self._log_message(f"AI: {msg.content}")
                 elif hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
                     self._log_message(f"TOOL CALL CHUNKS: {msg.tool_call_chunks}")
@@ -174,9 +178,7 @@ class AgentApp:
                     print_separator()
                     return
 
-                # 중단 플래그가 켜져있다면, 이후 모든 AI 메시지 무시
                 if self.user_interrupted:
-                    # 단, ToolMessage(결과 저장)는 아래에서 처리해야 하므로 통과시킴
                     if msg.__class__.__name__ != 'ToolMessage':
                         continue
 

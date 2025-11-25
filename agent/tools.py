@@ -215,10 +215,11 @@ def _decode_bytes_output(output_bytes: bytes) -> str:
     return str(output_bytes)
 
 @tool
-def run_terminal_command(command: str) -> str:
+def run_terminal_command(command: str, max_display_time: float = 10.0) -> str:
     """
-    터미널 명령어를 실행합니다.
-    실행 중 마지막 10줄을 실시간으로 표시합니다.
+    터미널 명령어를 실행한다.
+    max_display_time 초 동안의 실행 로그를 반환하며, 초과시 백그라운드로 전환된다.
+    max_display_time: 최대 표시 시간 (기본값: 10.0초)
     """
 
     danger_patterns = ["rm -rf /", "rm -rf", "sudo", "mkfs", ":(){ :|:& };:"]
@@ -258,7 +259,6 @@ def run_terminal_command(command: str) -> str:
         viewer = TerminalOutputViewer(str(log_path), max_lines=10)
         viewer.start(command)
         
-        MAX_DISPLAY_TIME = 10.0
         start_time = time.time()
         detached = False
         
@@ -280,7 +280,7 @@ def run_terminal_command(command: str) -> str:
                 
                 raise UserInterruptedException("사용자가 명령어 실행을 중단했습니다.")
             
-            if time.time() - start_time > MAX_DISPLAY_TIME:
+            if time.time() - start_time > max_display_time:
                 detached = True
                 break
             
