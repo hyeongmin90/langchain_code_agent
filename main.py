@@ -68,6 +68,7 @@ class AgentApp:
 
     def _handle_special_commands(self, user_input: str):
         """특수 명령어(/allow, /deny, /status)를 처리합니다."""
+        self._log_message(f"SPECIAL COMMAND: {user_input}")
         cmd = user_input.lower()
         if cmd == '/allow':
             self.auto_approve_mode = True
