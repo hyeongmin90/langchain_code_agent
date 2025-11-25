@@ -93,7 +93,7 @@ class AgentApp:
     def run(self):
         """메인 애플리케이션 루프를 실행합니다."""
         print_welcome_message()
-        
+        self._log_message(f"APPLICATION: 대화가 시작되었습니다.")
         while True:
             try:
                 user_input = input(f"{Fore.WHITE}{Style.BRIGHT}> {Style.RESET_ALL}").strip()
@@ -113,6 +113,7 @@ class AgentApp:
                 
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}종료되었습니다.{Style.RESET_ALL}")
+                self._log_message(f"APPLICATION: 종료되었습니다.")
                 break
             finally:
                 while self.background_processes:
