@@ -41,6 +41,16 @@ class AgentApp:
         self.thread_id = f"session-{self.session_counter:03d}"
         self.agent = self._create_my_agent()
 
+    def _log_message(self, msg):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            log_path = agent_context.CODE_DIR / "temp_logs" / "chat_log.txt"
+            log_path.parent.mkdir(exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(f"[{timestamp}] {str(msg)}\n")
+        except Exception as e:
+            print(f"[로그 저장 실패: {e}]")
+
     def _create_my_agent(self):
         """LangChain 에이전트를 생성하고 설정합니다."""
         model = ChatOpenAI(model="gpt-5-mini")
@@ -117,6 +127,8 @@ class AgentApp:
         """에이전트와 동기적으로 채팅하고 스트리밍 출력을 처리합니다."""
         self.user_interrupted = False
         clear_key_buffer()
+        
+        self._log_message(f"USER: {user_input}")
 
         config = {"configurable": {"thread_id": self.thread_id}, "recursion_limit": 100}
         preview_handler = PreviewHandler()
@@ -136,49 +148,101 @@ class AgentApp:
                   
                     if current_tool_name in ["write_file"]:
                         preview_handler.start_session(tool_name=current_tool_name)
-
-                # 조용한 도구는 헤더를 출력하지 않음
-                # silent_tools = ["read_file", "list_files, view_last_terminal_log"]
-                # if current_tool_name and not tool_header_printed and current_tool_name not in silent_tools:
-                #     print(f"\n{Back.YELLOW}{Fore.BLACK} 🔧 {current_tool_name} {Style.RESET_ALL}")
-                #     tool_header_printed = True
                 
                 if preview_handler.preview_active:
                     preview_handler.handle_chunk(chunk)
 
+        ready_to_exit = False 
+
         try:
             for event in self.agent.stream({"messages": [HumanMessage(content=user_input)]}, config, stream_mode="messages"):
-                if self.user_interrupted or check_esc_pressed():
-                    time.sleep(1.0)
-                    self.user_interrupted = True
-                    clear_key_buffer()
-                    raise UserInterruptedException("사용자가 응답을 중단했습니다.")
-
+                
                 msg, _ = event
                 
-                if isinstance(msg, AIMessageChunk) and msg.tool_call_chunks:
-                    _handle_tool_call_chunk(msg)
-                elif isinstance(msg, AIMessageChunk) and msg.content and not msg.tool_call_chunks:
-                    if not ai_response_started:
-                        print_ai_response_start()
-                        ai_response_started = True
-                    print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
-                elif msg.__class__.__name__ == 'ToolMessage':
-                    preview_handler.cancel_preview()
+            
+                if hasattr(msg, "content") and msg.content:
+                    self._log_message(f"AI: {msg.content}")
+                elif hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
+                    self._log_message(f"TOOL CALL CHUNKS: {msg.tool_call_chunks}")
+                else:
+                    self._log_message(f"MESSAGE: {str(msg)}")
+                
+                if ready_to_exit:
+                    print(f"{Fore.GREEN} (사용자 대기 상태로 복귀){Style.RESET_ALL}")
+                    print_separator()
+                    return
+
+                # 중단 플래그가 켜져있다면, 이후 모든 AI 메시지 무시
+                if self.user_interrupted:
+                    # 단, ToolMessage(결과 저장)는 아래에서 처리해야 하므로 통과시킴
+                    if msg.__class__.__name__ != 'ToolMessage':
+                        continue
+
+                # ---------------------------------------------------------
+                # 1. 도구 실행 결과 (ToolMessage)
+                # ---------------------------------------------------------
+                if msg.__class__.__name__ == 'ToolMessage':
+                    if 'preview_handler' in locals(): preview_handler.cancel_preview()
                     ai_response_started = False
+                    
+                    if self.user_interrupted:
+                        print(f"\n{Fore.GREEN}✓ 작업이 중단되었습니다.{Style.RESET_ALL}")
+                        ready_to_exit = True
+                        continue
+
+                # ---------------------------------------------------------
+                # 2. AI 텍스트 응답 (AIMessageChunk)
+                # ---------------------------------------------------------
+                elif isinstance(msg, AIMessageChunk) and msg.content:
+                    if ready_to_exit:
+                        print(f"{Fore.GREEN} 대기 상태 복귀{Style.RESET_ALL}")
+                        print_separator()
+                        return 
+
+                    if self.user_interrupted: continue
+                    if check_esc_pressed():
+                        self.user_interrupted = True
+                        raise UserInterruptedException("텍스트 생성 중단")
+
+                    if not msg.tool_call_chunks:
+                        if not ai_response_started:
+                            print_ai_response_start()
+                            ai_response_started = True
+                        print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
+
+                # ---------------------------------------------------------
+                # 3. 도구 호출 생성 (AIMessageChunk with tool_calls)
+                # ---------------------------------------------------------
+                elif isinstance(msg, AIMessageChunk) and msg.tool_call_chunks:
+
+                    if ready_to_exit:
+                        print(f"{Fore.GREEN} 대기 상태 복귀{Style.RESET_ALL}")
+                        print_separator()
+                        return
+                    
+                    if self.user_interrupted or ready_to_exit: continue
+                    
+                    if check_esc_pressed():
+                        self.user_interrupted = True
+                        raise UserInterruptedException("도구 호출 생성 중단")
+
+                    _handle_tool_call_chunk(msg)
 
             if ai_response_started: print()
             print_separator()
 
         except UserInterruptedException:
-            preview_handler.cancel_preview()
+            if 'preview_handler' in locals(): preview_handler.cancel_preview()
             clear_key_buffer()
             print(f"\n{Fore.RED}사용자가 작업을 중단했습니다.{Style.RESET_ALL}")
             print_separator()
+            self._log_message(f"USER INTERRUPTED: 사용자가 작업을 중단했습니다.")
+           
         except Exception as e:
-            preview_handler.cancel_preview()
+            if 'preview_handler' in locals(): preview_handler.cancel_preview()
             clear_key_buffer() 
             print(f"\n{Fore.RED}오류 발생: {e}{Style.RESET_ALL}\n")
+            self._log_message(f"ERROR: {e}")
 
 # ==========================================
 # 메인 실행 블록
