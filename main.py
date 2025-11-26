@@ -95,6 +95,55 @@ class AgentApp:
         self.session_counter += 1
         self.thread_id = f"session-{self.session_counter:03d}"
         print(f"\n{Fore.YELLOW}대화 기록이 초기화되었습니다. {Style.RESET_ALL}")
+    
+    def _cleanup_background_processes(self):
+        """백그라운드 프로세스들을 종료합니다."""
+        import subprocess as sp
+        while self.background_processes:
+            bg_info = self.background_processes.pop(0)
+            process = bg_info['process']
+            pid = bg_info['pid']
+            self._log_message(f"BACKGROUND PROCESS TERMINATING: {pid}")
+            try:
+                if platform.system() == "Windows":
+                    # Windows: taskkill로 프로세스 트리 전체 종료
+                    sp.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
+                           capture_output=True, timeout=5)
+                else:
+                    # Unix/Linux: 일반 terminate
+                    process.terminate()
+                    process.wait(timeout=2)
+                
+                self._log_message(f"BACKGROUND PROCESS TERMINATED SUCCESSFULLY: {pid}")
+                print(f"{Fore.YELLOW}백그라운드 프로세스 종료됨: PID {pid}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패 (PID {pid}): {e}{Style.RESET_ALL}\n")
+                self._log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
+        
+        # 프로세스가 완전히 종료될 때까지 잠시 대기
+        time.sleep(0.5)
+    
+    def _cleanup_log_files(self):
+        """모든 로그 파일을 삭제합니다."""
+        try:
+            log_dir = agent_context.CODE_DIR / "temp_logs"
+            deleted_count = 0
+            failed_count = 0
+            for log_file in log_dir.glob("*.log"):
+                try:
+                    log_file.unlink()
+                    deleted_count += 1
+                    self._log_message(f"LOG FILE DELETED: {log_file.name}")
+                except Exception as e:
+                    failed_count += 1
+                    self._log_message(f"LOG FILE DELETE ERROR: {log_file.name} - {e}")
+            
+            if deleted_count > 0:
+                print(f"{Fore.CYAN}로그 파일 {deleted_count}개가 정리되었습니다.{Style.RESET_ALL}")
+            if failed_count > 0:
+                print(f"{Fore.YELLOW}로그 파일 {failed_count}개는 삭제할 수 없습니다 (프로세스가 사용 중).{Style.RESET_ALL}")
+        except Exception as e:
+            self._log_message(f"LOG CLEANUP ERROR: {e}")
 
     def run(self):
         """메인 애플리케이션 루프를 실행합니다."""
@@ -121,20 +170,13 @@ class AgentApp:
                 print(f"\n{Fore.YELLOW}종료되었습니다.{Style.RESET_ALL}")
                 self._log_message(f"APPLICATION: 종료되었습니다.")
                 break
-            
-        while self.background_processes:
-            process = self.background_processes.pop(0)
-            self._log_message(f"BACKGROUND PROCESS TERMINATING: {process.pid}")
-            try:
-                process.terminate()
-                process.wait()
-                self._log_message(f"BACKGROUND PROCESS TERMINATED SUCCESSFULLY: {process.pid}")
-            except Exception as e:
-                print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패: {e}{Style.RESET_ALL}\n")
-                self._log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
         
+        # 정리 작업
+        self._cleanup_background_processes()
+        self._cleanup_log_files()
         
-        print(f"{Fore.CYAN}입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}{Style.RESET_ALL}")
+        # 토큰 사용량 출력
+        print(f"\n{Fore.CYAN}입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}{Style.RESET_ALL}")
 
