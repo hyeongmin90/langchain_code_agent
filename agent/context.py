@@ -14,3 +14,6 @@ BASE_DIR = Path.cwd()
 # 코드가 위치한 디렉토리 (로그 파일 저장용) - agent 폴더의 부모
 CODE_DIR = Path(__file__).resolve().parent.parent
 
+TOTAL_TOKEN_USAGE = 0
+INPUT_TOKEN_COUNT = 0
+OUTPUT_TOKEN_COUNT = 0

@@ -1,4 +1,4 @@
-import shutil
+
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessageChunk
@@ -8,7 +8,6 @@ from colorama import init, Fore, Back, Style
 import time
 
 from agent import context as agent_context
-import queue
 from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
 from agent.tools import AGENT_TOOLS
 from agent.ui import (
@@ -50,6 +49,12 @@ class AgentApp:
                 log_file.write(f"[{timestamp}] {str(msg)}\n")
         except Exception as e:
             print(f"[로그 저장 실패: {e}]")
+
+    def _update_token_usage(self, msg):
+        if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+            agent_context.TOTAL_TOKEN_USAGE += msg.usage_metadata.get("total_tokens", 0)
+            agent_context.INPUT_TOKEN_COUNT += msg.usage_metadata.get("input_tokens", 0)
+            agent_context.OUTPUT_TOKEN_COUNT += msg.usage_metadata.get("output_tokens", 0)
 
     def _create_my_agent(self):
         """LangChain 에이전트를 생성하고 설정합니다."""
@@ -127,6 +132,15 @@ class AgentApp:
             except Exception as e:
                 print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패: {e}{Style.RESET_ALL}\n")
                 self._log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
+        
+        
+        print(f"{Fore.CYAN}입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}{Style.RESET_ALL}")
+
+        self._log_message(f"APPLICATION: 총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}")
+        self._log_message(f"APPLICATION: 입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}")
+        self._log_message(f"APPLICATION: 출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}")    
                 
     
     def chat(self, user_input: str):
@@ -174,14 +188,14 @@ class AgentApp:
                 else:
                     self._log_message(f"MESSAGE: {str(msg)}")
                 
+                self._update_token_usage(msg)
+                
                 if ready_to_exit:
-                    print(f"{Fore.GREEN} (사용자 대기 상태로 복귀){Style.RESET_ALL}")
                     print_separator()
                     return
 
-                if self.user_interrupted:
-                    if msg.__class__.__name__ != 'ToolMessage':
-                        continue
+                if self.user_interrupted and msg.__class__.__name__ != 'ToolMessage':
+                    continue
 
                 # ---------------------------------------------------------
                 # 1. 도구 실행 결과 (ToolMessage)
