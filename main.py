@@ -1,33 +1,34 @@
-
+import platform
+import time
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessageChunk
 from langgraph.checkpoint.memory import InMemorySaver
 from dotenv import load_dotenv
-from colorama import init, Fore, Back, Style
-import time
+from colorama import init, Fore, Style
+
 
 from agent import context as agent_context
-from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer
+from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer, log_message, update_token_usage
+from agent.debug import PromptInspector
 from agent.tools import AGENT_TOOLS
 from agent.ui import (
     PreviewHandler,
     print_ai_response_start,
     print_separator,
     print_welcome_message,
-    get_separator_line
+    get_separator_line,
 )
 
 # 플랫폼별 초기화
 init(autoreset=True, strip=False, convert=False)
-import platform
 if platform.system() == "Windows":
     import ctypes
     kernel32 = ctypes.windll.kernel32
     kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
 
 # ==========================================
-# 애플리케이션 클래스
+# 애플리케이션 클래스   
 # ==========================================
 class AgentApp:
     def __init__(self):
@@ -40,25 +41,10 @@ class AgentApp:
         self.thread_id = f"session-{self.session_counter:03d}"
         self.agent = self._create_my_agent()
 
-    def _log_message(self, msg):
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            log_path = agent_context.CODE_DIR / "temp_logs" / "chat_log.txt"
-            log_path.parent.mkdir(exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write(f"[{timestamp}] {str(msg)}\n")
-        except Exception as e:
-            print(f"[로그 저장 실패: {e}]")
-
-    def _update_token_usage(self, msg):
-        if hasattr(msg, "usage_metadata") and msg.usage_metadata:
-            agent_context.TOTAL_TOKEN_USAGE += msg.usage_metadata.get("total_tokens", 0)
-            agent_context.INPUT_TOKEN_COUNT += msg.usage_metadata.get("input_tokens", 0)
-            agent_context.OUTPUT_TOKEN_COUNT += msg.usage_metadata.get("output_tokens", 0)
-
     def _create_my_agent(self):
         """LangChain 에이전트를 생성하고 설정합니다."""
         model = ChatOpenAI(model="gpt-5-mini")
+        # model = ChatOpenAI(model="gpt-5-mini", callbacks=[PromptInspector()])
 
         system_prompt = (
             "당신은 로컬 파일 시스템을 관리하는 전문 AI 개발자입니다. "
@@ -69,11 +55,17 @@ class AgentApp:
             "모든 대화는 한국어로 진행합니다."
         )
 
-        return create_agent(model=model, tools=AGENT_TOOLS, checkpointer=InMemorySaver(), system_prompt=system_prompt)
+        return create_agent(
+            model=model, 
+            tools=AGENT_TOOLS, 
+            checkpointer=InMemorySaver(), 
+            system_prompt=system_prompt,
+            debug=False
+        )
 
     def _handle_special_commands(self, user_input: str):
         """특수 명령어(/allow, /deny, /status)를 처리합니다."""
-        self._log_message(f"SPECIAL COMMAND: {user_input}")
+        log_message(f"SPECIAL COMMAND: {user_input}")
         cmd = user_input.lower()
         if cmd == '/allow':
             self.auto_approve_mode = True
@@ -103,24 +95,21 @@ class AgentApp:
             bg_info = self.background_processes.pop(0)
             process = bg_info['process']
             pid = bg_info['pid']
-            self._log_message(f"BACKGROUND PROCESS TERMINATING: {pid}")
+            log_message(f"BACKGROUND PROCESS TERMINATING: {pid}")
             try:
                 if platform.system() == "Windows":
-                    # Windows: taskkill로 프로세스 트리 전체 종료
                     sp.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
                            capture_output=True, timeout=5)
                 else:
-                    # Unix/Linux: 일반 terminate
                     process.terminate()
                     process.wait(timeout=2)
-                
-                self._log_message(f"BACKGROUND PROCESS TERMINATED SUCCESSFULLY: {pid}")
-                print(f"{Fore.YELLOW}백그라운드 프로세스 종료됨: PID {pid}{Style.RESET_ALL}")
+
+                print(f"\n{Fore.YELLOW}백그라운드 프로세스 종료됨: PID {pid}{Style.RESET_ALL}")
+                log_message(f"BACKGROUND PROCESS TERMINATED SUCCESSFULLY: {pid}")
             except Exception as e:
                 print(f"\n{Fore.RED}백그라운드 프로세스 종료 실패 (PID {pid}): {e}{Style.RESET_ALL}\n")
-                self._log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
+                log_message(f"BACKGROUND PROCESS TERMINATION ERROR: {e}")
         
-        # 프로세스가 완전히 종료될 때까지 잠시 대기
         time.sleep(0.5)
     
     def _cleanup_log_files(self):
@@ -133,7 +122,7 @@ class AgentApp:
                 try:
                     log_file.unlink()
                     deleted_count += 1
-                    self._log_message(f"LOG FILE DELETED: {log_file.name}")
+                    log_message(f"LOG FILE DELETED: {log_file.name}")
                 except Exception as e:
                     failed_count += 1
                     self._log_message(f"LOG FILE DELETE ERROR: {log_file.name} - {e}")
@@ -143,7 +132,7 @@ class AgentApp:
             if failed_count > 0:
                 print(f"{Fore.YELLOW}로그 파일 {failed_count}개는 삭제할 수 없습니다 (프로세스가 사용 중).{Style.RESET_ALL}")
         except Exception as e:
-            self._log_message(f"LOG CLEANUP ERROR: {e}")
+            log_message(f"LOG CLEANUP ERROR: {e}")
 
     def run(self):
         """메인 애플리케이션 루프를 실행합니다."""
@@ -168,7 +157,7 @@ class AgentApp:
                 
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}종료되었습니다.{Style.RESET_ALL}")
-                self._log_message(f"APPLICATION: 종료되었습니다.")
+                log_message(f"APPLICATION: 종료되었습니다.")
                 break
         
         # 정리 작업
@@ -180,9 +169,9 @@ class AgentApp:
         print(f"{Fore.CYAN}출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}{Style.RESET_ALL}")
 
-        self._log_message(f"APPLICATION: 총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}")
-        self._log_message(f"APPLICATION: 입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}")
-        self._log_message(f"APPLICATION: 출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}")    
+        log_message(f"APPLICATION: 총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}")
+        log_message(f"APPLICATION: 입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}")
+        log_message(f"APPLICATION: 출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}")    
                 
     
     def chat(self, user_input: str):
@@ -190,7 +179,7 @@ class AgentApp:
         self.user_interrupted = False
         clear_key_buffer()
         
-        self._log_message(f"USER: {user_input}")
+        log_message(f"USER: {user_input}")
 
         config = {"configurable": {"thread_id": self.thread_id}, "recursion_limit": 100}
         preview_handler = PreviewHandler()
@@ -222,15 +211,15 @@ class AgentApp:
                 msg, _ = event
                 
                 if msg.__class__.__name__ == 'ToolMessage':
-                    self._log_message(f"TOOL MESSAGE: {msg.content}")
+                    log_message(f"TOOL MESSAGE: {msg.content}")
                 elif hasattr(msg, "content") and msg.content:
-                    self._log_message(f"AI: {msg.content}")
+                    log_message(f"AI: {msg.content}")
                 elif hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                    self._log_message(f"TOOL CALL CHUNKS: {msg.tool_call_chunks}")
+                    log_message(f"TOOL CALL CHUNKS: {msg.tool_call_chunks}")
                 else:
-                    self._log_message(f"MESSAGE: {str(msg)}")
+                    log_message(f"MESSAGE: {str(msg)}")
                 
-                self._update_token_usage(msg)
+                update_token_usage(msg)
                 
                 if ready_to_exit:
                     print_separator()
@@ -297,13 +286,13 @@ class AgentApp:
             clear_key_buffer()
             print(f"\n{Fore.RED}사용자가 작업을 중단했습니다.{Style.RESET_ALL}")
             print_separator()
-            self._log_message(f"USER INTERRUPTED: 사용자가 작업을 중단했습니다.")
+            log_message(f"USER INTERRUPTED: 사용자가 작업을 중단했습니다.")
            
         except Exception as e:
             if 'preview_handler' in locals(): preview_handler.cancel_preview()
             clear_key_buffer() 
             print(f"\n{Fore.RED}오류 발생: {e}{Style.RESET_ALL}\n")
-            self._log_message(f"ERROR: {e}")
+            log_message(f"ERROR: {e}")
 
 # ==========================================
 # 메인 실행 블록
