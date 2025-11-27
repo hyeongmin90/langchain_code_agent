@@ -20,7 +20,6 @@ from agent.ui import (
     get_separator_line,
 )
 
-# 플랫폼별 초기화
 init(autoreset=True, strip=False, convert=False)
 if platform.system() == "Windows":
     import ctypes
@@ -125,7 +124,7 @@ class AgentApp:
                     log_message(f"LOG FILE DELETED: {log_file.name}")
                 except Exception as e:
                     failed_count += 1
-                    self._log_message(f"LOG FILE DELETE ERROR: {log_file.name} - {e}")
+                    log_message(f"LOG FILE DELETE ERROR: {log_file.name} - {e}")
             
             if deleted_count > 0:
                 print(f"{Fore.CYAN}로그 파일 {deleted_count}개가 정리되었습니다.{Style.RESET_ALL}")
@@ -137,7 +136,7 @@ class AgentApp:
     def run(self):
         """메인 애플리케이션 루프를 실행합니다."""
         print_welcome_message()
-        self._log_message(f"APPLICATION: 대화가 시작되었습니다.")
+        log_message(f"APPLICATION: 대화가 시작되었습니다.")
         while True:
             try:
                 user_input = input(f"{Fore.WHITE}{Style.BRIGHT}> {Style.RESET_ALL}").strip()
