@@ -1,6 +1,8 @@
 import platform
 import sys
 from pathlib import Path
+import time
+from agent import context as agent_context
 
 if platform.system() == "Windows":
     import msvcrt
@@ -45,3 +47,18 @@ def is_safe_path(path_str: str, base_dir: Path) -> bool:
     except Exception:
         return False
 
+def log_message(msg):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        log_path = agent_context.CODE_DIR / "temp_logs" / "chat_log.txt"
+        log_path.parent.mkdir(exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"[{timestamp}] {str(msg)}\n")
+    except Exception as e:
+        print(f"[로그 저장 실패: {e}]")
+
+def update_token_usage(msg):
+    if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+        agent_context.TOTAL_TOKEN_USAGE += msg.usage_metadata.get("total_tokens", 0)
+        agent_context.INPUT_TOKEN_COUNT += msg.usage_metadata.get("input_tokens", 0)
+        agent_context.OUTPUT_TOKEN_COUNT += msg.usage_metadata.get("output_tokens", 0)

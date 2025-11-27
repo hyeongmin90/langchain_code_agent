@@ -5,6 +5,7 @@ import re
 import json
 from colorama import Fore, Style, Back
 
+
 # ==========================================
 # 텍스트 너비 계산 및 줄바꿈 유틸리티
 # ==========================================
@@ -278,6 +279,8 @@ class TerminalOutputViewer:
             
             # 새 내용 출력 (줄 번호 없이)
             for line in last_n_lines:
+                if len(line) + 10 > self.cols:
+                    line = line[:self.cols - 10] + "..."
                 print(f"{Fore.YELLOW}{line.rstrip()}{Style.RESET_ALL}")
             
             self.last_printed_lines = len(last_n_lines)
@@ -303,4 +306,3 @@ class TerminalOutputViewer:
         if final_message:
             print(f"{final_message}")
         print()
-
