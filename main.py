@@ -12,6 +12,7 @@ from agent import context as agent_context
 from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer, log_message, update_token_usage
 from agent.debug import PromptInspector
 from agent.tools import AGENT_TOOLS
+from agent.sub_agent import sub_agent_tool
 from agent.ui import (
     PreviewHandler,
     print_ai_response_start,
@@ -46,17 +47,21 @@ class AgentApp:
         # model = ChatOpenAI(model="gpt-5-mini", callbacks=[PromptInspector()])
 
         system_prompt = (
-            "당신은 로컬 파일 시스템을 관리하는 전문 AI 개발자입니다. "
-            "사용자의 요청을 완수하기 위해 필요한 만큼 도구를 여러 번 사용할 수 있습니다. "
-            "최대한 사용자에게 질문을 피하라. 최대한 자동으로 작업을 완료하라."
-            "작업 시작 전 계획을 세우고, 순차적으로 도구를 사용하세요. 병렬 처리는 허용하지 않습니다."
-            "모든 작업은 사용자가 도중에 중지할 수 있다."
+            "당신은 사용자의 요청을 분석하고 작업을 계획하는 메인 AI 개발자 에이전트입니다. "
+            "사용자와 직접 대화하며 작업을 계획하여 서브 에이전트에게 작업을 위임하라."
+            "서브 에이전트는 파일 작업을 수행하는 전문 AI 개발자 에이전트이다. "
+            "서브 에이전트는 파일 작성, 수정, 읽기, 터미널 실행 및 로그 확인 등의 작업을 수행할 수 있다."
+            "작업 수행전 계획을 세우고 작업을 중간 단위로 나누어 서브 에이전트에게 순차적으로 위임하라"
+            "서브 에이전트에게 위임시 자율적으로 수행하도록 대략적인 계획을 전달하라"
+            "사용자에게는 서브 에이전트의 존재를 숨기고 자연스럽게 응답하라."
+            "서브 에이전트의 출력은 이미 사용자에게 보여지므로 출력을 최소화하라."
+            "병렬 처리는 허용하지 않습니다. 순차적으로 작업을 위임하라.\n"
             "모든 대화는 한국어로 진행합니다."
         )
 
         return create_agent(
             model=model, 
-            tools=AGENT_TOOLS, 
+            tools=[sub_agent_tool], 
             checkpointer=InMemorySaver(), 
             system_prompt=system_prompt,
             debug=False
@@ -184,23 +189,6 @@ class AgentApp:
         preview_handler = PreviewHandler()
         
         ai_response_started = False
-        current_tool_name = None
-        tool_header_printed = False
-
-        def _handle_tool_call_chunk(msg_chunk):
-            nonlocal current_tool_name, tool_header_printed, ai_response_started
-            for chunk in msg_chunk.tool_call_chunks:
-                
-                if "name" in chunk and chunk["name"]:
-                    current_tool_name = chunk["name"]
-                    tool_header_printed = False
-                    ai_response_started = False
-                  
-                    if current_tool_name in ["write_file"]:
-                        preview_handler.start_session(tool_name=current_tool_name)
-                
-                if preview_handler.preview_active:
-                    preview_handler.handle_chunk(chunk)
 
         ready_to_exit = False 
 
@@ -259,23 +247,6 @@ class AgentApp:
                             ai_response_started = True
                         print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
 
-                # ---------------------------------------------------------
-                # 3. 도구 호출 생성 (AIMessageChunk with tool_calls)
-                # ---------------------------------------------------------
-                elif isinstance(msg, AIMessageChunk) and msg.tool_call_chunks:
-
-                    if ready_to_exit:
-                        print(f"{Fore.GREEN} 대기 상태 복귀{Style.RESET_ALL}")
-                        print_separator()
-                        return
-                    
-                    if self.user_interrupted or ready_to_exit: continue
-                    
-                    if check_esc_pressed():
-                        self.user_interrupted = True
-                        raise UserInterruptedException("도구 호출 생성 중단")
-
-                    _handle_tool_call_chunk(msg)
 
             if ai_response_started: print()
             print_separator()

@@ -478,7 +478,6 @@ def kill_background_process(pid: int) -> str:
     
     try:
         if platform.system() == "Windows":
-            # Windows: taskkill로 프로세스 트리 전체 종료
             result = subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
                                   capture_output=True, timeout=5)
             if result.returncode == 0:
@@ -487,7 +486,6 @@ def kill_background_process(pid: int) -> str:
             else:
                 return f"프로세스 종료 실패 (PID: {pid}): {result.stderr.decode('cp949', errors='ignore')}"
         else:
-            # Unix/Linux
             process.terminate()
             process.wait(timeout=2)
             app.background_processes.remove(bg_info)
@@ -498,5 +496,18 @@ def kill_background_process(pid: int) -> str:
         return f"프로세스 {pid} ({bg_info['command']})가 강제 종료되었습니다."
     except Exception as e:
         return f"프로세스 종료 실패 (PID: {pid}): {e}"
+    
+@tool
+def stand_by() -> str:
+    """백그라운드 명령어 실행 로그확인을 위해 10초 동안 대기합니다."""
+    
+    seconds = 10
 
-AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, list_background_processes, view_terminal_log, kill_background_process]
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}AgentStandByMode{Style.RESET_ALL} {seconds} seconds...")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+
+    time.sleep(seconds)
+    return f"{seconds}초 대기완료"
+
+AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, list_background_processes, view_terminal_log, kill_background_process, stand_by]
