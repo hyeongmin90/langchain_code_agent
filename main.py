@@ -195,39 +195,40 @@ class AgentApp:
             for event in self.agent.stream({"messages": [HumanMessage(content=user_input)]}, config, stream_mode="messages"):
                 
                 msg, _ = event
-                
                 update_token_usage(msg)
                 
-                if hasattr(msg, "content") and msg.content and msg.__class__.__name__ != 'ToolMessage':
+                # 메시지 타입 판별
+                is_tool_message = msg.__class__.__name__ == 'ToolMessage'
+                has_content = hasattr(msg, "content") and msg.content
+                has_tool_chunks = hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks
+                
+                # 1) AI 응답 수집 (ToolMessage 제외)
+                if has_content and not is_tool_message:
                     ai_response_content.append(msg.content)
                 
-                else:
-                    if ai_response_content:
-                        log_message(f"AI: {''.join(ai_response_content)}")
-                        ai_response_content = []
+                # 2) 도구 호출 청크 수집
+                elif has_tool_chunks:
+                    chunk = msg.tool_call_chunks[0]
+                    if chunk.get("name"):
+                        # 새 도구 호출 시작 -> 이전 AI 응답 로그 저장
+                        if ai_response_content:
+                            log_message(f"AI: {''.join(ai_response_content)}")
+                            ai_response_content = []
+                        tool_call_info["name"] = chunk["name"]
+                    if chunk.get("args"):
+                        tool_call_info["args"] += chunk["args"]
                 
-                if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                    if msg.tool_call_chunks[0]["name"]:
-                        tool_call_info["name"] = msg.tool_call_chunks[0]["name"]
-                    
-                    tool_call_info["args"] += msg.tool_call_chunks[0]["args"]
-                        
-                else:
-                    if tool_call_info["name"]:
+                # 3) 도구 실행 결과
+                elif is_tool_message:
+                    # 이전 도구 호출 정보 로그 저장 (sub_agent_tool은 내부에서 로그 찍음)
+                    if tool_call_info["name"] and tool_call_info["name"] != "sub_agent_tool":
                         log_message(f"TOOL CALL: {tool_call_info['name']}({tool_call_info['args']})")
-                        tool_call_info = {"name": None, "args": ""}
-                    
-
-
-                if msg.__class__.__name__ == 'ToolMessage':
-                    log_message(f"TOOL MESSAGE: {msg.content}")
-                elif hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                    pass
-                elif hasattr(msg, "content") and msg.content:
-                    pass
+                    tool_call_info = {"name": None, "args": ""}
+                    log_message(f"TOOL RESULT: {msg.content}")
+                
                 else:
                     log_message(f"MESSAGE: {str(msg)}")
-                
+
                 if ready_to_exit:
                     print_separator()
                     return
@@ -238,12 +239,7 @@ class AgentApp:
                 # ---------------------------------------------------------
                 # 1. 도구 실행 결과 (ToolMessage)
                 # ---------------------------------------------------------
-                if msg.__class__.__name__ == 'ToolMessage':
-                    # 이전 응답이 있었다면 로그 저장
-                    if ai_response_content:
-                        log_message(f"AI: {''.join(ai_response_content)}")
-                        ai_response_content = []
-                    
+                if is_tool_message:
                     ai_response_started = False
                     
                     if self.user_interrupted:
@@ -254,7 +250,7 @@ class AgentApp:
                 # ---------------------------------------------------------
                 # 2. AI 텍스트 응답 (AIMessageChunk)
                 # ---------------------------------------------------------
-                elif isinstance(msg, AIMessageChunk) and msg.content:
+                elif has_content and not is_tool_message:
                     if ready_to_exit:
                         print(f"{Fore.GREEN} 대기 상태 복귀{Style.RESET_ALL}")
                         print_separator()
@@ -265,11 +261,10 @@ class AgentApp:
                         self.user_interrupted = True
                         raise UserInterruptedException("텍스트 생성 중단")
 
-                    if not msg.tool_call_chunks:
-                        if not ai_response_started:
-                            # print_ai_response_start()
-                            ai_response_started = True
-                        print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
+                    if not ai_response_started:
+                        # print_ai_response_start()
+                        ai_response_started = True
+                    print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
                         
 
 

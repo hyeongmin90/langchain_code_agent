@@ -163,8 +163,12 @@ def sub_agent_tool(prompt: str) -> str:
     Returns:
         서브 에이전트가 수행한 작업의 요약
     """
-    agent = SubAgent()
+    # 도구 호출 로그 (서브 에이전트 실행 전)
+    prompt_preview = prompt[:80] + '...' if len(prompt) > 80 else prompt
+    log_message(f"TOOL CALL: sub_agent_tool(prompt='{prompt_preview}')")
     log_message(f"SUB AGENT: 작업이 시작되었습니다.")
+    
+    agent = SubAgent()
 
     try:    
         print()
