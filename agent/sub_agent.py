@@ -1,21 +1,15 @@
-import platform
-import time
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessageChunk
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
-from dotenv import load_dotenv
-from colorama import init, Fore, Style
-
+from colorama import Fore, Style
 
 from agent import context as agent_context
 from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer, log_message, update_token_usage
-from agent.debug import PromptInspector
 from agent.tools import AGENT_TOOLS
 from agent.ui import (
     PreviewHandler,
-    print_sub_ai_response_start,
     print_separator,
 )
 
@@ -26,7 +20,7 @@ class SubAgent:
         self.thread_id = f"sub_agent-{self.session_counter:03d}"
         self.agent = self._create_my_agent()
         self.user_interrupted = False
-        self.auto_approve_mode = False
+        
 
     def _create_my_agent(self):
         """LangChain 에이전트를 생성하고 설정합니다."""
@@ -35,14 +29,15 @@ class SubAgent:
         system_prompt = (
             "당신은 메인 에이전트의 실제 작업을 수행하는 하위 에이전트입니다. "
             "메인 에이전트의 수행 요청을 완수하기 위해 필요한 만큼 도구를 여러 번 사용할 수 있습니다. "
-            "모든 작업은 메인 에이전트의 요청에 따라 수행하며, 반드시 작업을 완수한 후 결과를 반환해야 합니다.\n"
-            "작업 수행전 간단한 계획을 세우고 작업을 작은 단위로 나누어 수행하라.\n"
-            "모든 작업이 완료되면 최종 결과를 요약하여 간략하게 전달하라.\n"
-            "병렬 처리는 허용하지 않습니다. 순차적으로 작업을 수행해야 합니다.\n"
-            "보고에는 추가 정보없이 내용의 핵심만 간략하게 압축하여 전달하라. 일반 텍스트 형식으로 전달하라."
-            "모든 출력은 사용자에게 보여진다. 사용자가 볼 필요가 없는 출력은 최소화하며, 사용자가 기다리는 동안 출력을 통해 작업 진행 상황을 알려주라."
-            "사용자는 원치 않는 작업 도중 중지할 수 있습니다.\n"
-            "모든 대화는 한국어로 진행합니다."
+            "모든 작업은 메인 에이전트의 요청에 따라 수행하며, 반드시 작업을 완수한 후 결과를 반환한다."
+            "메인 에이전트의 계획은 대략적인 계획이므로 자율적으로 수행하라."
+            "작업 수행전 간단한 계획을 세우고 작업을 작은 단위로 나누어 수행한다."
+            "모든 작업이 완료되면 최종 결과를 요약하여 전달한다."
+            "병렬 처리는 허용하지 않는다. 순차적으로 작업을 수행한다."
+            "보고에는 핵심만 전달한다. 일반 텍스트 형식으로 전달한다."
+            "모든 출력은 사용자에게 보여진다. 사용자가 기다리는 동안 출력을 통해 작업 진행 상황을 알려준다."
+            "사용자는 원치 않는 작업 도중 중지할 수 있다."
+            "모든 대화는 한국어로 진행한다."
         )
 
         return create_agent(
@@ -55,38 +50,22 @@ class SubAgent:
 
     def run(self, prompt: str):
         """서브 에이전트가 수행할 작업을 실행합니다."""
-        log_message(f"SUB AGENT: 작업이 시작되었습니다.")
         summary = self.chat(prompt)
-
-        log_message(f"SUB AGENT: 총 토큰 사용량: {agent_context.TOTAL_TOKEN_USAGE}")
-        log_message(f"SUB AGENT: 입력 토큰 수: {agent_context.INPUT_TOKEN_COUNT}")
-        log_message(f"SUB AGENT: 출력 토큰 수: {agent_context.OUTPUT_TOKEN_COUNT}")    
 
         return summary if summary else "작업이 완료되었습니다."
 
     def chat(self, prompt: str):
         """서브 에이전트가 수행할 작업을 실행합니다."""
         self.user_interrupted = False
-        
-        log_message(f"SUB AGENT: {prompt}")
 
         config = {"configurable": {"thread_id": self.thread_id}, "recursion_limit": 150}
         preview_handler = PreviewHandler()
-        
-        ai_response_started = False
-        current_tool_name = None
-        tool_header_printed = False
         ai_response_summary = []  # AI 응답을 수집할 리스트
 
         def _handle_tool_call_chunk(msg_chunk):
-            nonlocal current_tool_name, tool_header_printed, ai_response_started
             for chunk in msg_chunk.tool_call_chunks:
-                
                 if "name" in chunk and chunk["name"]:
                     current_tool_name = chunk["name"]
-                    tool_header_printed = False
-                    ai_response_started = False
-                  
                     if current_tool_name in ["write_file"]:
                         preview_handler.start_session(tool_name=current_tool_name)
                 
@@ -112,7 +91,6 @@ class SubAgent:
                 # ---------------------------------------------------------
                 if msg.__class__.__name__ == 'ToolMessage':
                     if 'preview_handler' in locals(): preview_handler.cancel_preview()
-                    ai_response_started = False
                     
                     if self.user_interrupted:
                         print(f"\n{Fore.GREEN}✓ 작업이 중단되었습니다.{Style.RESET_ALL}")
@@ -154,10 +132,7 @@ class SubAgent:
 
                     _handle_tool_call_chunk(msg)
 
-            if ai_response_started: print()
             print_separator()
-            
-            # AI 응답 요약 반환
             return "".join(ai_response_summary)
 
         except UserInterruptedException:
@@ -189,9 +164,12 @@ def sub_agent_tool(prompt: str) -> str:
         서브 에이전트가 수행한 작업의 요약
     """
     agent = SubAgent()
+    log_message(f"SUB AGENT: 작업이 시작되었습니다.")
 
     try:    
+        print()
         result = agent.run(prompt)
+        log_message(f"SUB AGENT: 작업이 완료되었습니다.")
         return result
 
     except UserInterruptedException as e:
@@ -199,7 +177,4 @@ def sub_agent_tool(prompt: str) -> str:
 
     except Exception as e:
         return f"작업 실패: {e}"
-
-    finally:
-        agent.session_counter += 1
-        agent.thread_id = f"sub_agent-{agent.session_counter:03d}"
+ 

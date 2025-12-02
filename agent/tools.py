@@ -22,7 +22,7 @@ def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
     app = context.app_instance
     if app and app.auto_approve_mode:
-        print(f"{Fore.GREEN}[자동 승인]\n {prompt}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[자동 승인]\n {prompt}\n{Style.RESET_ALL}")
         return True
     
     with approval_lock:
@@ -30,6 +30,7 @@ def _request_approval(prompt: str) -> bool:
         print(f"\n{prompt}")
         print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         approval = input(f"\n{Fore.YELLOW}실행하시겠습니까? (y/n): {Style.RESET_ALL}").strip().lower()
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         return approval == 'y'
 
 def _build_tree(directory: Path, prefix: str = "", max_depth: int = 6, current_depth: int = 0) -> tuple[str, int]:
@@ -119,7 +120,7 @@ def read_file(filename: str) -> str:
 
 @tool
 def write_file(filename: str, content: str) -> str:
-    """파일을 새로 쓰거나 덮어씁니다."""
+    """파일을 새로 쓰거나 덮어씁니다. 경로는 자동으로 생성된다."""
     if not is_safe_path(filename, BASE_DIR):
         return "보안 경고: 작업 디렉토리 외부에 파일을 쓸 수 없습니다."
     target = (BASE_DIR / filename).resolve()

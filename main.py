@@ -11,10 +11,8 @@ from colorama import init, Fore, Style
 from agent import context as agent_context
 from agent.utils import UserInterruptedException, check_esc_pressed, clear_key_buffer, log_message, update_token_usage
 from agent.debug import PromptInspector
-from agent.tools import AGENT_TOOLS
 from agent.sub_agent import sub_agent_tool
 from agent.ui import (
-    PreviewHandler,
     print_ai_response_start,
     print_separator,
     print_welcome_message,
@@ -49,13 +47,15 @@ class AgentApp:
         system_prompt = (
             "당신은 사용자의 요청을 분석하고 작업을 계획하는 메인 AI 개발자 에이전트입니다. "
             "사용자와 직접 대화하며 작업을 계획하여 서브 에이전트에게 작업을 위임하라."
+            "작업 시작전 사용자에게 작업 계획을 설명후 진행하라."
             "서브 에이전트는 파일 작업을 수행하는 전문 AI 개발자 에이전트이다. "
             "서브 에이전트는 파일 작성, 수정, 읽기, 터미널 실행 및 로그 확인 등의 작업을 수행할 수 있다."
-            "작업 수행전 계획을 세우고 작업을 중간 단위로 나누어 서브 에이전트에게 순차적으로 위임하라"
-            "서브 에이전트에게 위임시 자율적으로 수행하도록 대략적인 계획을 전달하라"
+            "작업 수행전 계획을 세우고 작업을 중간 단위로 나누어 서브 에이전트에게 순차적으로 위임하라."
+            "서브 에이전트에게 위임시 자율적으로 수행하도록 구체적인 계획이 아닌 대략적인 작업 내용만 전달하라."
+            "작업 이외의 추가적인 출력 요청은 금지한다."
             "사용자에게는 서브 에이전트의 존재를 숨기고 자연스럽게 응답하라."
             "서브 에이전트의 출력은 이미 사용자에게 보여지므로 출력을 최소화하라."
-            "병렬 처리는 허용하지 않습니다. 순차적으로 작업을 위임하라.\n"
+            "병렬 처리는 허용하지 않습니다. 순차적으로 작업을 위임하라."
             "모든 대화는 한국어로 진행합니다."
         )
 
@@ -186,10 +186,9 @@ class AgentApp:
         log_message(f"USER: {user_input}")
 
         config = {"configurable": {"thread_id": self.thread_id}, "recursion_limit": 100}
-        preview_handler = PreviewHandler()
-        
         ai_response_started = False
-
+        ai_response_content = []  # 응답을 수집할 리스트
+        tool_call_info = {"name": None, "args": ""}  # 도구 호출 정보 수집
         ready_to_exit = False 
 
         try:
@@ -197,16 +196,37 @@ class AgentApp:
                 
                 msg, _ = event
                 
+                update_token_usage(msg)
+                
+                if hasattr(msg, "content") and msg.content and msg.__class__.__name__ != 'ToolMessage':
+                    ai_response_content.append(msg.content)
+                
+                else:
+                    if ai_response_content:
+                        log_message(f"AI: {''.join(ai_response_content)}")
+                        ai_response_content = []
+                
+                if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
+                    if msg.tool_call_chunks[0]["name"]:
+                        tool_call_info["name"] = msg.tool_call_chunks[0]["name"]
+                    
+                    tool_call_info["args"] += msg.tool_call_chunks[0]["args"]
+                        
+                else:
+                    if tool_call_info["name"]:
+                        log_message(f"TOOL CALL: {tool_call_info['name']}({tool_call_info['args']})")
+                        tool_call_info = {"name": None, "args": ""}
+                    
+
+
                 if msg.__class__.__name__ == 'ToolMessage':
                     log_message(f"TOOL MESSAGE: {msg.content}")
-                elif hasattr(msg, "content") and msg.content:
-                    log_message(f"AI: {msg.content}")
                 elif hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                    log_message(f"TOOL CALL CHUNKS: {msg.tool_call_chunks}")
+                    pass
+                elif hasattr(msg, "content") and msg.content:
+                    pass
                 else:
                     log_message(f"MESSAGE: {str(msg)}")
-                
-                update_token_usage(msg)
                 
                 if ready_to_exit:
                     print_separator()
@@ -219,7 +239,11 @@ class AgentApp:
                 # 1. 도구 실행 결과 (ToolMessage)
                 # ---------------------------------------------------------
                 if msg.__class__.__name__ == 'ToolMessage':
-                    if 'preview_handler' in locals(): preview_handler.cancel_preview()
+                    # 이전 응답이 있었다면 로그 저장
+                    if ai_response_content:
+                        log_message(f"AI: {''.join(ai_response_content)}")
+                        ai_response_content = []
+                    
                     ai_response_started = False
                     
                     if self.user_interrupted:
@@ -243,23 +267,27 @@ class AgentApp:
 
                     if not msg.tool_call_chunks:
                         if not ai_response_started:
-                            print_ai_response_start()
+                            # print_ai_response_start()
                             ai_response_started = True
                         print(f"{Fore.GREEN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
+                        
 
 
             if ai_response_started: print()
+            
+            # 마지막 응답 로그 저장
+            if ai_response_content:
+                log_message(f"AI: {''.join(ai_response_content)}")
+            
             print_separator()
 
         except UserInterruptedException:
-            if 'preview_handler' in locals(): preview_handler.cancel_preview()
             clear_key_buffer()
             print(f"\n{Fore.RED}사용자가 작업을 중단했습니다.{Style.RESET_ALL}")
             print_separator()
             log_message(f"USER INTERRUPTED: 사용자가 작업을 중단했습니다.")
            
         except Exception as e:
-            if 'preview_handler' in locals(): preview_handler.cancel_preview()
             clear_key_buffer() 
             print(f"\n{Fore.RED}오류 발생: {e}{Style.RESET_ALL}\n")
             log_message(f"ERROR: {e}")
