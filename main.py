@@ -263,6 +263,10 @@ class AgentApp:
                         self.user_interrupted = True
                         raise UserInterruptedException("텍스트 생성 중단")
 
+                    # 서브 에이전트가 실행 중이면 메인 에이전트의 출력을 건너뜀 (서브 에이전트가 이미 출력함)
+                    if agent_context.sub_agent_running:
+                        continue
+
                     if not ai_response_started:
                         # print_ai_response_start()
                         ai_response_started = True

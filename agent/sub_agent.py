@@ -113,6 +113,8 @@ class SubAgent:
 
                     if not msg.tool_call_chunks:
                         ai_response_summary.append(msg.content)  # AI 응답 수집
+                        # 서브 에이전트 출력을 청록색으로 실시간 출력
+                        print(f"{Fore.CYAN}{msg.content}{Style.RESET_ALL}", end="", flush=True)
 
                 # ---------------------------------------------------------
                 # 3. 도구 호출 생성 (AIMessageChunk with tool_calls)
@@ -168,6 +170,9 @@ def sub_agent_tool(prompt: str) -> str:
     log_message(f"TOOL CALL: sub_agent_tool(prompt='{prompt_preview}')")
     log_message(f"SUB AGENT: 작업이 시작되었습니다.")
     
+    # 서브 에이전트 실행 중 플래그 설정
+    agent_context.sub_agent_running = True
+    
     agent = SubAgent()
 
     try:    
@@ -177,8 +182,13 @@ def sub_agent_tool(prompt: str) -> str:
         return result
 
     except UserInterruptedException as e:
+        agent_context.app_instance.user_interrupted = True
         return f"작업 중단: {e}"
 
     except Exception as e:
         return f"작업 실패: {e}"
+    
+    finally:
+        # 서브 에이전트 실행 완료 플래그 해제
+        agent_context.sub_agent_running = False
  

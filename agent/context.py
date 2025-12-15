@@ -17,3 +17,6 @@ CODE_DIR = Path(__file__).resolve().parent.parent
 TOTAL_TOKEN_USAGE = 0
 INPUT_TOKEN_COUNT = 0
 OUTPUT_TOKEN_COUNT = 0
+
+# 서브 에이전트 실행 상태 추적
+sub_agent_running = False
