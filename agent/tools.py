@@ -22,7 +22,7 @@ def _request_approval(prompt: str) -> bool:
     """사용자에게 작업을 승인받는 중앙 함수"""
     app = context.app_instance
     if app and app.auto_approve_mode:
-        print(f"{Fore.GREEN}[자동 승인]\n {prompt}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[자동 승인]\n {prompt}\n{Style.RESET_ALL}")
         return True
     
     with approval_lock:
@@ -30,6 +30,7 @@ def _request_approval(prompt: str) -> bool:
         print(f"\n{prompt}")
         print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         approval = input(f"\n{Fore.YELLOW}실행하시겠습니까? (y/n): {Style.RESET_ALL}").strip().lower()
+        print(f"\n{get_separator_line(color=Fore.YELLOW)}")
         return approval == 'y'
 
 def _build_tree(directory: Path, prefix: str = "", max_depth: int = 6, current_depth: int = 0) -> tuple[str, int]:
@@ -119,7 +120,7 @@ def read_file(filename: str) -> str:
 
 @tool
 def write_file(filename: str, content: str) -> str:
-    """파일을 새로 쓰거나 덮어씁니다."""
+    """파일을 새로 쓰거나 덮어씁니다. 경로는 자동으로 생성된다."""
     if not is_safe_path(filename, BASE_DIR):
         return "보안 경고: 작업 디렉토리 외부에 파일을 쓸 수 없습니다."
     target = (BASE_DIR / filename).resolve()
@@ -478,7 +479,6 @@ def kill_background_process(pid: int) -> str:
     
     try:
         if platform.system() == "Windows":
-            # Windows: taskkill로 프로세스 트리 전체 종료
             result = subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
                                   capture_output=True, timeout=5)
             if result.returncode == 0:
@@ -487,7 +487,6 @@ def kill_background_process(pid: int) -> str:
             else:
                 return f"프로세스 종료 실패 (PID: {pid}): {result.stderr.decode('cp949', errors='ignore')}"
         else:
-            # Unix/Linux
             process.terminate()
             process.wait(timeout=2)
             app.background_processes.remove(bg_info)
@@ -498,5 +497,18 @@ def kill_background_process(pid: int) -> str:
         return f"프로세스 {pid} ({bg_info['command']})가 강제 종료되었습니다."
     except Exception as e:
         return f"프로세스 종료 실패 (PID: {pid}): {e}"
+    
+@tool
+def stand_by() -> str:
+    """백그라운드 명령어 실행 로그확인을 위해 10초 동안 대기합니다."""
+    
+    seconds = 10
 
-AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, list_background_processes, view_terminal_log, kill_background_process]
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+    print(f"\n{Style.BRIGHT}AgentStandByMode{Style.RESET_ALL} {seconds} seconds...")
+    print(f"\n{get_separator_line(char='─', color=Fore.WHITE)}")
+
+    time.sleep(seconds)
+    return f"{seconds}초 대기완료"
+
+AGENT_TOOLS = [list_files, read_file, write_file, edit_file, run_terminal_command, list_background_processes, view_terminal_log, kill_background_process, stand_by]
