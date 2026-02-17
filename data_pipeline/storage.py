@@ -70,7 +70,9 @@ if __name__ == "__main__":
             print(f"\nFound {len(results)} results:")
             for i, doc in enumerate(results):
                 source = doc.metadata.get("source", "Unknown")
+                original_content = doc.metadata.get("original_content", "")
                 print(f"\n[{i+1}] Source: {source}")
                 print(f"     Content: {doc.page_content}")
+                print(f"     Original Content: {original_content}")
         except Exception as e:
             print(f"Error querying: {e}")
