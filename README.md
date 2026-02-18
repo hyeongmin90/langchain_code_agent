@@ -79,6 +79,14 @@ langchainDev/
 │   ├── tools.py           # 서브 에이전트 도구 정의
 │   ├── sub_agent.py       # 서브 에이전트 구현
 │   └── debug.py           # 디버깅 도구
+├── data_pipeline/         # 데이터 파이프라인
+│   ├── __init__.py        # 패키지 초기화
+│   ├── rag_agent.py       # 독립 RAG 에이전트
+│   ├── pipeline_main.py   # 데이터 파이프라인 메인
+│   ├── crawler.py         # 웹 크롤러
+│   ├── processor.py       # 텍스트 처리 및 청킹
+│   └── storage.py         # ChromaDB 관리
+├── chroma_db/             # 벡터 저장소 (ChromaDB)
 ├── temp_logs/             # 로그 파일
 │   ├── chat_log.txt       # 채팅 로그
 │   └── *.log              # 터미널 명령어 로그
