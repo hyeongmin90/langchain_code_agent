@@ -60,7 +60,7 @@ def generate_questions(chunk_content):
     """
     Uses LLM to generate 3 challenging questions based on the provided text chunk.
     """
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-5-mini", temperature=0.5)
     
     prompt = PromptTemplate.from_template(
         "You are an expert evaluator for a RAG system.\n"
