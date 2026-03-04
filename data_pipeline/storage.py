@@ -9,33 +9,34 @@ import re
 
 # Global vectorstore instance (Singleton)
 _vectorstore_lock = threading.Lock()
-_vectorstore = None
+_vectorstores = {}
+_bm25_retrievers = {}
 
 PERSIST_DIRECTORY = "./chroma_db"
 
 from tqdm import tqdm
 
-def get_vectorstore():
+def get_vectorstore(collection_name="spring_docs"):
     """
     Returns the initialized Chroma vectorstore instance (Singleton).
     Thread-safe initialization.
     """
-    global _vectorstore
+    global _vectorstores
     
-    if _vectorstore is None:
+    if collection_name not in _vectorstores:
         with _vectorstore_lock:
-            if _vectorstore is None:
+            if collection_name not in _vectorstores:
                 # Initialize
                 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-                _vectorstore = Chroma(
-                    collection_name="spring_docs",
+                _vectorstores[collection_name] = Chroma(
+                    collection_name=collection_name,
                     embedding_function=embeddings,
                     persist_directory=PERSIST_DIRECTORY,
                 )
                 
-    return _vectorstore
+    return _vectorstores[collection_name]
 
-def add_documents(documents):
+def add_documents(documents, collection_name="spring_docs"):
     """
     Adds a list of Document objects to the vectorstore.
     """
@@ -43,8 +44,8 @@ def add_documents(documents):
         tqdm.write("No documents to add.")
         return
 
-    vectorstore = get_vectorstore()
-    tqdm.write(f"Adding {len(documents)} documents to ChromaDB...")
+    vectorstore = get_vectorstore(collection_name)
+    tqdm.write(f"Adding {len(documents)} documents to ChromaDB ({collection_name})...")
     url_link = documents[0].metadata["source"]
     result = vectorstore.get(where={"source": url_link})
     ids_to_delete = result["ids"]
@@ -56,11 +57,11 @@ def add_documents(documents):
     vectorstore.add_documents(documents=documents, ids=ids)
     tqdm.write("Documents added successfully.")
 
-def mmr_query_documents(query, k=3, category=None):
+def mmr_query_documents(query, k=3, category=None, collection_name="spring_docs"):
     """
     Searches for documents similar to the query. with mmr
     """
-    vectorstore = get_vectorstore()
+    vectorstore = get_vectorstore(collection_name)
     search_filter = None
     if category:
         search_filter = {"category": category}
@@ -76,11 +77,11 @@ def mmr_query_documents(query, k=3, category=None):
     return results
 
 
-def query_documents(query, k=3, category=None):
+def query_documents(query, k=3, category=None, collection_name="spring_docs"):
     """
     Searches for documents similar to the query.
     """
-    vectorstore = get_vectorstore()
+    vectorstore = get_vectorstore(collection_name)
     search_filter = None
     if category:
         search_filter = {"category": category}
@@ -94,30 +95,36 @@ def query_documents(query, k=3, category=None):
 #     warnings.simplefilter("ignore")
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
+from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_cohere import CohereRerank
 
 
 _bm25_retriever = None
 
-def get_hybrid_retriever(k=3, category=None):
+def get_hybrid_retriever(k=3, category=None, collection_name="spring_docs", dense_weight=0.7, sparse_weight=0.3, use_reranker=False):
     """
     Returns an EnsembleRetriever combining dense (Chroma) and sparse (BM25) retrievers.
     """
-    global _bm25_retriever
+    global _bm25_retrievers
     
-    vectorstore = get_vectorstore()
+    vectorstore = get_vectorstore(collection_name)
     
+    # Reranker needs more candidates from base retrievers (dense and bm25)
+    fetch_k = max(k * 2, 30) if use_reranker else k
+
     # Setup Chroma Retriever
-    search_kwargs = {"k": k}
+    search_kwargs = {"k": fetch_k}
     if category:
         search_kwargs["filter"] = {"category": category}
+    
     chroma_retriever = vectorstore.as_retriever(search_kwargs=search_kwargs)
     
     # Initialize BM25 Retriever by fetching all documents from Chroma
     # We do this lazily (only when hybrid search is requested)
-    if _bm25_retriever is None:
+    if collection_name not in _bm25_retrievers:
         with _vectorstore_lock:
-            if _bm25_retriever is None:
-                tqdm.write("Initializing BM25 Retriever from Chroma documents...")
+            if collection_name not in _bm25_retrievers:
+                tqdm.write(f"Initializing BM25 Retriever from Chroma documents ({collection_name})...")
                 db_data = vectorstore.get()
                 
                 if not db_data or not db_data.get('documents'):
@@ -147,28 +154,36 @@ def get_hybrid_retriever(k=3, category=None):
                     return [w for w in words if w not in stopwords]
                 
                 # Create BM25 retriever with custom preprocessing
-                _bm25_retriever = BM25Retriever.from_documents(
+                _bm25_retrievers[collection_name] = BM25Retriever.from_documents(
                     docs,
                     preprocess_func=preprocess_text
                 )
     
-    # Set k for BM25
-    _bm25_retriever.k = k
+    # Set fetch size for BM25
+    _bm25_retrievers[collection_name].k = fetch_k
     
     # Create the Ensemble Retriever
-    # You can adjust the weights (e.g., 0.5/0.5 or 0.7 dense/0.3 sparse)
     ensemble_retriever = EnsembleRetriever(
-        retrievers=[chroma_retriever, _bm25_retriever],
-        weights=[0.7, 0.3]
+        retrievers=[chroma_retriever, _bm25_retrievers[collection_name]],
+        weights=[dense_weight, sparse_weight]
     )
     
+    if use_reranker:
+        # Initialize Cohere Reranker
+        compressor = CohereRerank(model="rerank-english-v3.0", top_n=k)
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor,
+            base_retriever=ensemble_retriever
+        )
+        return compression_retriever
+        
     return ensemble_retriever
 
-def query_hybrid(query, k=3, category=None):
+def query_hybrid(query, k=3, category=None, collection_name="spring_docs", dense_weight=0.7, sparse_weight=0.3, use_reranker=False):
     """
     Searches for documents using Hybrid Search (BM25 + Chroma Dense).
     """
-    retriever = get_hybrid_retriever(k=k, category=category)
+    retriever = get_hybrid_retriever(k=k, category=category, collection_name=collection_name, dense_weight=dense_weight, sparse_weight=sparse_weight, use_reranker=use_reranker)
     if hasattr(retriever, 'invoke'):
          results = retriever.invoke(query)
     else:
