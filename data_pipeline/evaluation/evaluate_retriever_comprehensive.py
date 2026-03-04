@@ -21,7 +21,9 @@ def evaluate_retrieval(question, expected_id, method="dense", k=10):
     if method == "mmr":
         results = mmr_query_documents(question, k=k)
     elif method == "hybrid":
-        results = query_hybrid(question, k=k)
+        results = query_hybrid(question, k=k, use_reranker=False)
+    elif method == "hybrid_cohere":
+        results = query_hybrid(question, k=k, use_reranker=True)
     else:
         results = query_documents(question, k=k)
 
@@ -32,7 +34,6 @@ def evaluate_retrieval(question, expected_id, method="dense", k=10):
         # Matching by id is preferred if available, otherwise by source as a loose fallback
         if expected_id and retrieved_id == expected_id:
             return rank, results
-       
             
     return -1, [] # Not found within top k
 
@@ -49,9 +50,10 @@ def run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=5
     print(f"데이터셋 로드 완료: {len(dataset)}개의 청크 항목")
     embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small") 
     
-    methods = ["dense", "hybrid"]
+    methods = ["dense", "hybrid", "hybrid_cohere"]
     
     all_metrics = {m: {
+        "hits_1": 0,
         "hits_5": 0, "mrr_sum_5": 0.0, 
         "hits_10": 0, "mrr_sum_10": 0.0, 
         "hits_max_k": 0, "mrr_sum_max_k": 0.0, 
@@ -76,6 +78,10 @@ def run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=5
                 rank, retrieved_docs = evaluate_retrieval(question, expected_id, method=method, k=max_k)
                 
                 # Retrieval Metrics 업데이트
+                is_hit_1 = rank == 1
+                if is_hit_1:
+                    all_metrics[method]["hits_1"] += 1
+
                 is_hit_5 = 0 < rank <= 5
                 if is_hit_5:
                     all_metrics[method]["hits_5"] += 1
@@ -108,12 +114,17 @@ def run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=5
                 })
                 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    os.makedirs("results", exist_ok=True)
+    unified_log_file = os.path.join("results", f"comprehensive_eval_summary_{timestamp}.txt")
+    unified_log_content = f"=== RAG 중합 평가 요약 ({timestamp}) ===\n"
+    unified_log_content += f"평가된 총 질문 수: {total_questions}\n"
     
     # 평가 결과 출력 및 저장
     for method in methods:
         tq = total_questions if total_questions > 0 else 1
         vq = all_metrics[method]["valid_redundancy_queries"] if all_metrics[method]["valid_redundancy_queries"] > 0 else 1
         
+        hit_rate_1 = all_metrics[method]["hits_1"] / tq
         hit_rate_5 = all_metrics[method]["hits_5"] / tq
         mrr_5 = all_metrics[method]["mrr_sum_5"] / tq
         hit_rate_10 = all_metrics[method]["hits_10"] / tq
@@ -124,27 +135,32 @@ def run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=5
         avg_sem_red = all_metrics[method]["total_semantic_redundancy"] / vq
         avg_lex_red = all_metrics[method]["total_lexical_redundancy"] / vq
         
-        print("\n" + "="*50)
-        print(f"=== 평가 결과 ({method.upper()}) ===")
-        print(f"평가된 총 질문 수: {total_questions}")
-        print("-" * 25)
-        print("--- 검색 성능 (Retrieval Metrics) ---")
-        print(f"Top-5 Hit Rate: {hit_rate_5:.2%} | MRR: {mrr_5:.4f}")
-        print(f"Top-10 Hit Rate: {hit_rate_10:.2%} | MRR: {mrr_10:.4f}")
-        print(f"Top-{max_k} Hit Rate: {hit_rate_max_k:.2%} | MRR: {mrr_max_k:.4f}")
-        print("-" * 25)
-        print("--- 검색 결과 중복도 (Redundancy Metrics) ---")
-        print(f"의미적 중복도(Semantic Redundancy): {avg_sem_red:.4f}")
-        print(f"어휘적 중복도(Lexical Redundancy): {avg_lex_red:.4f}")
-        print("="*50)
+        # 통합 로그 및 콘솔용 텍스트
+        summary_text = f"\n" + "="*50 + f"\n=== 평가 결과 ({method.upper()}) ===\n"
+        summary_text += "-" * 25 + "\n"
+        summary_text += "--- 검색 성능 (Retrieval Metrics) ---\n"
+        summary_text += f"Top-1 Hit Rate: {hit_rate_1:.2%}\n"
+        summary_text += f"Top-5 Hit Rate: {hit_rate_5:.2%} | MRR: {mrr_5:.4f}\n"
+        summary_text += f"Top-10 Hit Rate: {hit_rate_10:.2%} | MRR: {mrr_10:.4f}\n"
+        summary_text += f"Top-{max_k} Hit Rate: {hit_rate_max_k:.2%} | MRR: {mrr_max_k:.4f}\n"
+        summary_text += "-" * 25 + "\n"
+        summary_text += "--- 검색 결과 중복도 (Redundancy Metrics) ---\n"
+        summary_text += f"의미적 중복도(Semantic Redundancy): {avg_sem_red:.4f}\n"
+        summary_text += f"어휘적 중복도(Lexical Redundancy): {avg_lex_red:.4f}\n"
+        summary_text += "="*50 + "\n"
+        
+        print(summary_text)
+        unified_log_content += summary_text
 
-        log_file = f"comprehensive_eval_log_{method}_{timestamp}.txt"
+        # 개별 상세 로그 (results 디렉토리에 저장)
+        log_file = os.path.join("results", f"comprehensive_eval_log_{method}_{timestamp}.txt")
         with open(log_file, "w", encoding="utf-8") as f:
             f.write(f"Retrieval Method: {method.upper()}\n\n")
             f.write("=== Evaluation Results ===\n")
             f.write(f"Total Questions Evaluated: {total_questions}\n")
             f.write("-" * 25 + "\n")
             f.write("--- Retrieval Metrics ---\n")
+            f.write(f"Top-1 Hit Rate: {hit_rate_1:.2%} ({all_metrics[method]['hits_1']}/{total_questions})\n")
             f.write(f"Top-5 Hit Rate: {hit_rate_5:.2%} ({all_metrics[method]['hits_5']}/{total_questions}) | MRR: {mrr_5:.4f}\n")
             f.write(f"Top-10 Hit Rate: {hit_rate_10:.2%} ({all_metrics[method]['hits_10']}/{total_questions}) | MRR: {mrr_10:.4f}\n")
             f.write(f"Top-{max_k} Hit Rate: {hit_rate_max_k:.2%} ({all_metrics[method]['hits_max_k']}/{total_questions}) | MRR: {mrr_max_k:.4f}\n")
@@ -162,6 +178,66 @@ def run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=5
                 f.write(f"Q{i}: {log['question']}\n")
                 f.write(f"   Source: {log['expected_source']}\n")
                 f.write(f"   Result: {status}\n\n")
+                
+    # 통합 로그 작성
+    with open(unified_log_file, "w", encoding="utf-8") as f:
+        f.write(unified_log_content)
+
+    # === 시각화 (Visualization) ===
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        # 폰트 깨짐 방지
+        plt.rcParams['font.family'] = 'Malgun Gothic' if os.name == 'nt' else 'AppleGothic'
+        plt.rcParams['axes.unicode_minus'] = False
+        
+        metrics_names = ["Top-1 Hit", "Top-5 Hit", "Top-10 Hit", f"MRR@{min(max_k, 5)}", f"MRR@{min(max_k, 10)}"]
+        method_labels = [m.upper() for m in methods]
+        
+        # 데이터 수집
+        hit1_data, hit5_data, hit10_data, mrr5_data, mrr10_data = [], [], [], [], []
+        tq = total_questions if total_questions > 0 else 1
+        for method in methods:
+            hit1_data.append(all_metrics[method]["hits_1"] / tq)
+            hit5_data.append(all_metrics[method]["hits_5"] / tq)
+            hit10_data.append(all_metrics[method]["hits_10"] / tq)
+            mrr5_data.append(all_metrics[method]["mrr_sum_5"] / tq)
+            mrr10_data.append(all_metrics[method]["mrr_sum_10"] / tq)
+            
+        x = np.arange(len(metrics_names))
+        width = 0.25
+        
+        fig, ax = plt.subplots(figsize=(12, 7))
+        
+        # 각 method별로 막대 그리기
+        ax.bar(x - width, [hit1_data[0], hit5_data[0], hit10_data[0], mrr5_data[0], mrr10_data[0]], width, label=method_labels[0], color='#1f77b4')
+        ax.bar(x,        [hit1_data[1], hit5_data[1], hit10_data[1], mrr5_data[1], mrr10_data[1]], width, label=method_labels[1], color='#ff7f0e')
+        if len(methods) > 2:
+            ax.bar(x + width, [hit1_data[2], hit5_data[2], hit10_data[2], mrr5_data[2], mrr10_data[2]], width, label=method_labels[2], color='#2ca02c')
+            
+        ax.set_ylabel('Scores')
+        ax.set_title('RAG 종합 평가 지표 비교')
+        ax.set_xticks(x)
+        ax.set_xticklabels(metrics_names)
+        ax.set_ylim(0, 1.1) # Y축은 0~1.1 (최대값 1이므로)
+        ax.legend()
+        
+        # 텍스트 라벨 추가
+        for p in ax.patches:
+            height = p.get_height()
+            if height > 0:
+                ax.annotate(f'{height:.2f}', (p.get_x() + p.get_width() / 2., height), ha='center', va='bottom', xytext=(0, 3), textcoords='offset points', fontsize=9)
+            
+        fig.tight_layout()
+        chart_file = os.path.join("results", f"comprehensive_eval_chart_{timestamp}.png")
+        plt.savefig(chart_file, dpi=300)
+        print(f"\n시각화 차트가 저장되었습니다: {chart_file}")
+        
+    except ImportError:
+        print("\n[알림] matplotlib이 설치되어 있지 않아 시각화 차트를 생성하지 못했습니다. 'pip install matplotlib'을 실행해주세요.")
+    except Exception as e:
+        print(f"\n[오류] 차트 생성 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     run_comprehensive_evaluation(dataset_file="evaluation_dataset.json", max_k=20)
