@@ -2,6 +2,7 @@
 temp_logs/
 chunk_logs/
 chroma_db/
+spring_crawled_md/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
