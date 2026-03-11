@@ -96,9 +96,11 @@ pip install -r requirements.txt
 
 ### 3. 주요 스크립트 실행
 *   **최종 파이프라인 문서 수집 및 저장**
+    > **Note**: 프로젝트 초기 복제 시 로컬에 벡터 DB(ChromaDB)가 구성되어 있지 않습니다. RAG 검색 기능과 챗봇이 작동하려면 **반드시 가장 먼저 이 스크립트를 한 번 실행하여 공식 문서를 수집하고 데이터베이스를 채워야 합니다.**
     ```bash
     python final_pipeline/main_ingest.py
     ```
+
 *   **최종 파이프라인 RAG 챗봇 실행**
     ```bash
     python final_pipeline/agent.py

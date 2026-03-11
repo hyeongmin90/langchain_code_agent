@@ -110,13 +110,6 @@ def fetch_docs(start_url="https://docs.spring.io/spring-boot/reference/", max_pa
             clean_url != start_url):
             
             # Additional Check: Exclude other versions (e.g. /3.5/, /4.0-SNAPSHOT/)
-            # Get path relative to base_path
-            # clean_url: https://docs.../reference/redis/index.html
-            # start_url: https://docs.../reference/
-            
-            # Logic: If the part AFTER 'reference/' starts with a digit, it's likely a version.
-            # Example: .../reference/4.0-SNAPSHOT/index.html -> '4.0-SNAPSHOT/index.html' -> Starts with digit? Yes.
-            # Example: .../reference/redis/index.html -> 'redis/index.html' -> Starts with digit? No.
             
             relative_path = parsed_url.path.replace(base_path, '')
             if relative_path.startswith('/'):
@@ -171,15 +164,17 @@ def fetch_docs(start_url="https://docs.spring.io/spring-boot/reference/", max_pa
                 filename = f"{base}_{counter}"
             
             saved_files[filename] = url
-            filename += ".md"
             
-            # # Debug: 크롤링 결과 확인용
-            filepath = os.path.join(output_dir, filename)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"Source: {url}\n\n")
-                f.write(markdown_text)
-            
-            print(f"  ✓ Saved: {filename}")
+            # ===================================
+            # Debug: 크롤링 결과 확인용
+            # filename += ".md"
+            # filepath = os.path.join(output_dir, filename)
+            # with open(filepath, "w", encoding="utf-8") as f:
+            #     f.write(f"Source: {url}\n\n")
+            #     f.write(markdown_text)
+
+            # print(f"  ✓ Saved: {filename}")
+            # ===================================
             success_count += 1
             
             yield {'url': url, 'content': markdown_text}
