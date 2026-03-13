@@ -2,13 +2,19 @@ import os
 import sys
 import random
 import concurrent.futures
+import warnings
 from tqdm import tqdm
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import List
+from pathlib import Path
 
-# 부모 디렉토리를 경로에 추가
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+warnings.filterwarnings("ignore", category=UserWarning, module=r"pydantic\..*")
+# warnings.filterwarnings("ignore", message="Pydantic serializer warnings", category=UserWarning)
+
+# 프로젝트 루트를 경로에 추가 (pipeline/evaluation/dataset/ -> Root)
+ROOT_DIR = Path(__file__).parent.parent.parent.parent
+sys.path.append(str(ROOT_DIR))
 
 from langsmith import Client
 from langchain_openai import ChatOpenAI
@@ -29,42 +35,38 @@ class QAPairs(BaseModel):
 
 def generate_qa_pairs_from_chunk(content: str, max_pairs: int = 1) -> List[QAPair]:
     """
-    LLM을 사용하여 텍스트에서 Q&A 쌍을 추출합니다.
-    내용이 부실하면 적게 만들거나 안 만듭니다.
+    LLM을 사용하여 텍스트에서 고난도 Q&A 쌍을 추출합니다.
+    어휘적 중복을 최소화하고 추상화된 질문을 생성하도록 유도합니다.
     """
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0.2)
+    
+    llm = ChatOpenAI(model="gpt-5-mini", temperature=0.4)
 
     prompt = """
-    당신은 RAG 시스템 평가를 위한 데이터셋을 생성하는 전문가입니다.
+    당신은 Retrieval 시스템의 성능을 극한으로 테스트하기 위한 **최상위 난이도(Very Hard)** 데이터셋 생성 전문가입니다.
 
-    웹 페이지에서 크롤링한 마크다운 텍스트가 주어지면, 해당 텍스트를 기반으로 최대 {max_pairs}개의 질문과 답변(Q&A) 쌍을 생성하세요.
+    웹 문서에서 추출된 하나의 텍스트 청크가 주어집니다.
+    이 청크의 내용을 기반으로 최대 {max_pairs}개의 질문과 답변(Q&A) 쌍을 생성하세요.
 
-    질문과 답변은 반드시 영어로 작성해야 합니다.
+    이 데이터셋의 목적은 **"사용자가 아주 짧고 불친절하게 질문했을 때, 시스템이 의도를 파악하여 정확한 문서를 찾아낼 수 있는가"**를 평가하는 것입니다.
 
     다음 지침을 반드시 따르세요.
 
+    [질문 생성 핵심 규칙 - 필수]
+    1. **극단적 간결함 (Extreme Conciseness):** 질문은 반드시 5~10단어 이내의 짧은 문장이어야 합니다. 상세한 설명이나 부연 설명을 모두 제거하세요.
+    2. **키워드 제거 (Keyword Stripping):** 텍스트에 등장하는 핵심 기술 용어, 클래스명, 메서드명, 프로퍼티명을 질문에 직접 노출하지 마세요. (예: 'Redis' -> '인메모리 저장소', 'WebSecurityConfigurerAdapter' -> '보안 설정 방식')
+    3. **추상화 및 모호함 (Abstraction & Ambiguity):** 실제 사용자가 채팅창에 툭 던지는 듯한 말투를 사용하세요. 구체적인 상황을 설명하기보다 "어떻게 하나요?", "~의 차이가 뭔가요?"와 같이 핵심 의도만 짧게 담으세요.
+    4. **의미적 재구성:** 텍스트의 문장 구조를 그대로 따르지 말고, 사용자가 가질만한 근본적인 의문이나 문제 상황으로 재구성하세요.
+
     [문서 품질 평가]
-    1. 텍스트가 너무 짧거나 실질적인 정보가 부족한 경우, 또는 메뉴/네비게이션/코드 스니펫 위주의 내용일 경우에는 질문을 적게 생성하거나 아예 생성하지 마세요(0개 가능).
-
-    [정보 근거]
-    1. 모든 답변은 반드시 제공된 텍스트 안에서 명확하게 확인할 수 있어야 합니다.
-    2. 외부 지식을 사용하거나 추측하여 내용을 만들어내지 마세요.
-
-    [질문 난이도]
-    1. 질문은 텍스트 문장을 그대로 재사용하지 마세요.
-    2. 가능하면 표현을 바꾸거나 의미적으로 동일한 다른 표현을 사용하세요.
-    3. 질문은 텍스트의 한 문장 이상의 정보를 이해해야 답할 수 있도록 하세요.
-    4. 질문은 텍스트의 핵심 개념이나 동작 원리를 묻도록 하세요.
-    5. 단순한 정의 질문보다는 이유, 특징, 동작 방식 등을 묻는 질문을 우선하세요.
-    6. 질문에 텍스트의 핵심 키워드를 그대로 사용하지 마세요.
-
-    [자연스러운 질문]
-    1. 실제 사용자가 검색하거나 물어볼 법한 자연스러운 질문을 작성하세요.
-    2. 질문이 문서 구조를 그대로 따라가는 형태(예: "이 문서에서 ~라고 설명하는 것은 무엇인가")는 피하세요.
+    1. 텍스트가 너무 짧거나(300자 미만 권장 제외 로직은 외부에서 처리됨) 내용이 부실하면 질문을 생성하지 마세요.
 
     [답변 작성 방식]
-    1. 답변은 간결하지만 질문에 대한 핵심 정보를 충분히 포함하도록 작성하세요.
-    2. 불필요하게 긴 문장이나 문단을 그대로 복사하지 마세요.
+    1. 답변은 반드시 제공된 텍스트 안에서 명확하게 확인할 수 있어야 합니다. (외부 지식 금지)
+    2. 답변은 질문의 의도에 맞게 핵심만 간결하고 전문적인 톤으로 작성하세요.
+
+    [출력 형태]
+    질문과 답변은 반드시 **영어(English)**로 작성해야 합니다. 
+    (실제 평가는 영문 검색 성능을 위주로 진행하므로)
 
     Text:
     {text}
@@ -74,22 +76,21 @@ def generate_qa_pairs_from_chunk(content: str, max_pairs: int = 1) -> List[QAPai
     chain = prompt_template | llm.with_structured_output(QAPairs)
     
     try:
-        # 텍스트가 너무 길 경우 (API 토큰 제한 및 비용 방지), 앞부분 위주로 자름 
+        # 텍스트가 너무 길 경우 자름
         truncated_content = content[:15000] if len(content) > 15000 else content
         result = chain.invoke({"text": truncated_content, "max_pairs": max_pairs})
         
-        # 모델이 지시를 무시하고 더 많이 생성하는 경우를 대비해 슬라이싱
         return result.pairs[:max_pairs]
     except Exception as e:
         print(f"Q&A 생성 중 오류 발생: {e}")
         return []
 
 def create_dataset_from_crawled_md(
-    collection_name: str = "spring_docs_markdown", 
+    collection_name: str = "spring_docs", 
     num_samples: int = 50, 
     max_pairs_per_chunk: int = 1
 ):
-    print(f"=== VectorStore({collection_name}) 기반 LangSmith 평가용 데이터셋 구축 시작 (대상: {num_samples}개 청크) ===")
+    print(f"=== VectorStore({collection_name}) 기반 고난도 평가용 데이터셋 구축 시작 (대상: {num_samples}개 청크) ===")
     
     # 1. DB에서 문서 가져오기
     vectorstore = get_vectorstore(collection_name)
@@ -105,15 +106,23 @@ def create_dataset_from_crawled_md(
         
     print(f"VectorStore에서 총 {len(documents)}개의 청크를 발견했습니다.")
 
-    # 랜덤 샘플링 (인덱스 추출)
-    actual_samples = min(num_samples, len(documents))
-    sampled_indices = random.sample(range(len(documents)), actual_samples)
+    # 품질 좋은 청크 선별 (길이 300자 이상)
+    viable_indices = [i for i, doc in enumerate(documents) if len(doc) > 300]
+    print(f"품질 검사를 통과한 청크(300자 이상): {len(viable_indices)}개")
+
+    if not viable_indices:
+        print("질문을 생성하기에 충분한 길이의 청크가 없습니다.")
+        return
+
+    # 랜덤 샘플링
+    actual_samples = min(num_samples, len(viable_indices))
+    sampled_indices = random.sample(viable_indices, actual_samples)
     print(f"이 중 {actual_samples}개의 청크를 랜덤으로 추출하여 QA 생성을 진행합니다.")
     
     client = Client()
     
-    # LangSmith Dataset 준비 (영문 이름 권장)
-    dataset_name_eng = "eval_dataset_train_v3"
+    # 데이터셋 이름 업데이트 (고난도 버전임을 명시)
+    dataset_name_eng = f"eval_dataset_hard_short_v1_{collection_name}"
     try:
         dataset = client.read_dataset(dataset_name=dataset_name_eng)
         print(f"데이터셋 '{dataset_name_eng}'이(가) 이미 존재합니다. 해당 데이터셋에 추가합니다.")
@@ -121,7 +130,7 @@ def create_dataset_from_crawled_md(
         # 데이터셋이 없는 경우 새로 생성
         dataset = client.create_dataset(
             dataset_name=dataset_name_eng,
-            description="spring_crawled_md Markdown 청크에서 추출 및 생성된 RAG 질문-정답 데이터셋 (청크 당 최대 1개)"
+            description=f"[{collection_name}] 고난도(Lexical Isolation, Abstraction 적용) RAG 평가용 데이터셋"
         )
         print(f"LangSmith 데이터셋 '{dataset_name_eng}' 생성 완료.")
 
@@ -192,8 +201,8 @@ def create_dataset_from_crawled_md(
         except Exception as e:
             print(f"업로드 중 오류 발생: {e}")
             
-    print(f"\n✅ 데이터셋 구축이 완료되었습니다!")
-    print(f"👉 LangSmith Dashboard에서 '{dataset_name_eng}' 데이터셋을 확인하세요.")
+    print(f"\n데이터셋 구축이 완료되었습니다!")
+    print(f"LangSmith Dashboard에서 '{dataset_name_eng}' 데이터셋을 확인하세요.")
 
 if __name__ == "__main__":
     # 데이터셋 구성 인자: num_samples=50 (50개 청크 랜덤추출), max_pairs_per_chunk=1

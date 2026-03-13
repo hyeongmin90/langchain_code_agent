@@ -42,7 +42,9 @@ def split_datasets(file1, output1, output2, ratio=0.3):
 if __name__ == "__main__":
     import os
     
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.append(project_root)
+    base_dir = project_root # Root 디렉토리 기준으로 파일 경로 설정
     file1 = os.path.join(base_dir, "evaluation_dataset.json")
     
     output1 = os.path.join(base_dir, "test_v1.json")

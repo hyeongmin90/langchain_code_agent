@@ -1,205 +1,179 @@
 import os
 import sys
+import uuid
 from dotenv import load_dotenv
 
-# 부모 디렉토리를 경로에 추가
+# 프로젝트 루트를 경로에 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from langsmith import Client
 from langsmith.evaluation import evaluate
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
-from pipeline.retriever import query_documents
+from pipeline.retriever import query_hybrid
 from openevals.prompts import CORRECTNESS_PROMPT, RAG_GROUNDEDNESS_PROMPT, RAG_RETRIEVAL_RELEVANCE_PROMPT
 from openevals.llm import create_llm_as_judge
+from agent.graph import build_graph
 
 load_dotenv()
 
 # 평가 심사위원(Judge)으로 사용할 LLM 설정
 judge_llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
 
-from langchain.agents import create_agent
-from langgraph.checkpoint.memory import InMemorySaver
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+# ==========================================
+# 0. 에이전트 초기화
+# ==========================================
 
-# ==========================================
-# 0. 실제 RAG 에이전트 초기화
-# ==========================================
-def initialize_agent():
+# 1) Agentic RAG (기존 고도화된 에이전트)
+agentic_rag = build_graph()
+
+# 2) Simple RAG (단순 검색 후 답변 체인)
+def get_simple_rag_chain():
     llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
-    tools = [search_spring_boot_docs]
-    system_prompt = (
-        "You are a Spring Boot Expert RAG Agent.\n"
-        "Answer user questions accurately using the provided documentation.\n"
-        "ALWAYS use the 'search_spring_boot_docs' tool to verify information before answering.\n"
-        "For the first search, enter the user's question as is without specifying a document type.\n"
-        "If you cannot find the answer in the search results, admit it honestly.\n"
-        "Do not include any information not found in the search results.\n"
-        "If search results are insufficient, retry with different keywords before giving up.\n"
-        "Provide clear, code-centric answers where applicable.\n"
-        "Do not use search_spring_boot_docs tool more than 4 times.\n"
-        ""
-        # "Answer in Korean."
-    )
-    
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        checkpointer=InMemorySaver(),
-        system_prompt=system_prompt,
-    )
-    return agent
+    prompt = PromptTemplate.from_template(
+        """You are a Spring Boot Expert. Answer the user question accurately using only the provided context.
+If you don't know the answer based on the context, say that you don't know.
+answer in korean language.
 
+Question: {question}
 
-# 글로벌로 한 번만 생성해 둡니다. (테스트마다 매번 생성하면 느려짐)
-eval_agent = initialize_agent()
+Context:
+{context}
+
+Answer:"""
+    )
+    return prompt | llm
+
+simple_rag_chain = get_simple_rag_chain()
 
 # ==========================================
-# 1. 평가할 대상 함수 (Target Function) 정의
+# 1. 평가 대상 함수 (Target Functions)
 # ==========================================
-def predict_rag(inputs: dict) -> dict:
-    """
-    명시된 질문에 대해 실제 rag_agent 파이프라인(LangGraph)을 가동하여 답변과 검색된 컨텍스트를 반환합니다.
-    """
+
+def predict_agentic_rag(inputs: dict) -> dict:
+    """고도화된 LangGraph 에이전트 평가용 함수"""
     question = inputs["question"]
-    
-    # 세션 관리를 위해 임의의 thread_id 생성 (평가 건마다 독립적인 스레드)
-    import uuid
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     
-    # Agent 실행
-    result = eval_agent.invoke({"messages": [HumanMessage(content=question)]}, config)
-    messages = result["messages"]
+    # 그래프 실행
+    result = agentic_rag.invoke({"question": question}, config)
     
-    # 최종 답변과 검색된 컨텍스트 추출
-    final_answer = ""
-    accumulated_context = ""
-    
-    for msg in messages:
-        if isinstance(msg, AIMessage) and msg.content:
-            final_answer = msg.content
-        elif isinstance(msg, ToolMessage):
-            # 검색 도구가 반환한 문자열(context)을 수집
-            accumulated_context += msg.content + "\n\n"
+    # AgentState에서 결과 추출 (agent/state.py 참고)
+    prediction = result.get("answer", "No answer generated.")
+    # 검색된 컨텍스트 수집 (nodes.py에서 retrieved_docs에 저장한다고 가정)
+    docs = result.get("documents", [])
+
+    context = "\n\n".join([doc.page_content for doc in docs])
             
     return {
-        "prediction": final_answer,
-        "context": accumulated_context.strip() # context_qa 평가 시 환각 여부를 판단하기 위해 넘김
-    }
-
-def predict_rag_no_tool(inputs: dict) -> dict:
-    """
-    명시된 질문에 대해 실제 rag_agent 파이프라인(LangGraph)을 가동하여 답변과 검색된 컨텍스트를 반환합니다.
-    """
-    question = inputs["question"]
-    
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
-
-    context = query_documents(question, k=5)
-    
-    prompt = PromptTemplate.from_template(
-        """
-        You are a Spring Boot Expert RAG Agent.\n
-        Answer user questions accurately using the provided documentation.\n
-        If you cannot find the answer in the search results, admit it honestly.\n
-        Do not include any information not found in the search results.\n
-        Provide clear, code-centric answers where applicable.\n
-        Question: {question}\n
-        Context: {context}\n
-        """
-    )
-
-    chain = prompt | llm
-
-    result = chain.invoke({"question": question, "context": context})
-    final_answer = result.content
-            
-    return {
-        "prediction": final_answer,
+        "prediction": prediction,
         "context": context
     }
+
+def predict_simple_rag(inputs: dict) -> dict:
+    """단순 검색 후 답변 체인 평가용 함수"""
+    question = inputs["question"]
+    
+    # 1. 검색 (Retrieve)
+    docs = query_hybrid(question, k=5, use_reranker=True)
+    context = "\n\n".join([doc.page_content for doc in docs])
+    
+    # 2. 생성 (Generate)
+    result = simple_rag_chain.invoke({"question": question, "context": context})
+    
+    return {
+        "prediction": result.content,
+        "context": context
+    }
+
+# ==========================================
+# 2. 평가 지표 (Evaluators)
+# ==========================================
 
 qa_evaluator = create_llm_as_judge(
     prompt=CORRECTNESS_PROMPT,
     judge=judge_llm,
-    feedback_key="qa",
-    continuous=True,     # 0.0 ~ 1.0 점수
-    use_reasoning=True   # 판단에 대한 이유 포함
+    feedback_key="correctness",
+    continuous=True,
+    use_reasoning=False
 )
 
 context_evaluator = create_llm_as_judge(
     prompt=RAG_GROUNDEDNESS_PROMPT,
     judge=judge_llm,
-    feedback_key="context_qa",
+    feedback_key="groundedness",
     continuous=True,
-    use_reasoning=True
+    use_reasoning=False
 )
 
 retrieval_evaluator = create_llm_as_judge(
     prompt=RAG_RETRIEVAL_RELEVANCE_PROMPT,
-    feedback_key="retrieval_relevance",
     judge=judge_llm,
+    feedback_key="retrieval_relevance",
     continuous=True,
-    use_reasoning=True
+    use_reasoning=False
 )
 
-def run_qa_eval(run, example):
-    """
-    LangSmith evaluate()에서 qa_evaluator를 호출하기 위해 감싸는 래퍼 함수입니다.
-    """
-    prediction = run.outputs["prediction"]
-    reference = example.outputs["answer"]
-    question = example.inputs["question"]
-    
-    # CORRECTNESS_PROMPT는 {inputs}, {reference_outputs}, {outputs}를 요구하므로 맞춰서 넘깁니다.
-    result = qa_evaluator(
-        inputs=question,
-        reference_outputs=reference,
-        outputs=prediction
+def correctness(run, example):
+    return qa_evaluator(
+        inputs=example.inputs["question"],
+        reference_outputs=example.outputs["answer"],
+        outputs=run.outputs["prediction"]
     )
-    return result
 
-def run_context_eval(run, example):
-    """
-    LangSmith evaluate()에서 context_evaluator를 호출하기 위해 감싸는 래퍼 함수입니다.
-    """
-    prediction = run.outputs["prediction"]
-    context = run.outputs["context"]
-    
-    # RAG_GROUNDEDNESS_PROMPT는 {context}, {outputs}를 요구하므로 맞춰서 넘깁니다.
-    result = context_evaluator(
-        context=context,
-        outputs=prediction
+def groundedness(run, example):
+    return context_evaluator(
+        context=run.outputs["context"],
+        outputs=run.outputs["prediction"]
     )
-    return result
 
-def run_retrieval_eval(run, example):
-    """
-    LangSmith evaluate()에서 retrieval_evaluator를 호출하기 위해 감싸는 래퍼 함수입니다.
-    """
-    question = example.inputs["question"]
-    context = run.outputs["context"]
-    
-    # RAG_RETRIEVAL_RELEVANCE_PROMPT {context}, {inputs}
-    result = retrieval_evaluator(
-        context=context,
-        inputs=question
+def retrieval_relevance(run, example):
+    return retrieval_evaluator(
+        context=run.outputs["context"],
+        inputs=example.inputs["question"]
     )
-    return result
+
+# ==========================================
+# 3. 평가 실행
+# ==========================================
 
 def run_evaluation():
-    dataset_name="sampled_50_questions"
-    print(f"=== '{dataset_name}' 데이터셋을 이용한 RAG 파이프라인 평가 시작 ===")
+    dataset_name = "eval_dataset_hard_short_v1_spring_docs"
+    # dataset_name = "evl_test_dataset"
+
     
-    experiment_results = evaluate(
-        predict_rag,
+    client = Client()
+    try:
+        client.read_dataset(dataset_name=dataset_name)
+    except Exception:
+        print(f"데이터셋 {dataset_name}을 찾을 수 없습니다.")
+        return
+
+    print(f"=== '{dataset_name}' 데이터셋을 이용한 비교 평가 시작 ===")
+    
+    evaluators = [correctness, groundedness, retrieval_relevance]
+
+    # 1. Agentic RAG 평가
+    print("\n1. Agentic RAG (Advanced Agent) 평가 중...")
+    evaluate(
+        predict_agentic_rag,
         data=dataset_name,
-        evaluators=[run_qa_eval, run_context_eval, run_retrieval_eval],
-        experiment_prefix="RAG-eval", 
-        description="Spring Boot RAG 파이프라인의 정확도(qa) 및 문서 기반 답변 생성(context_qa) 여부 통합 테스트"
+        evaluators=evaluators,
+        experiment_prefix="Agentic-RAG-Hard_v2",
+        max_concurrency=5
+    )
+
+    # 2. Simple RAG 평가
+    print("\n2. Simple RAG (Basic Chain) 평가 중...")
+    evaluate(
+        predict_simple_rag,
+        data=dataset_name,
+        evaluators=evaluators,
+        experiment_prefix="Simple-RAG-Hard",
+        max_concurrency=5
     )
     
-    print("\n평가가 완료되었습니다. 출력된 LangSmith 대시보드 URL을 클릭하여 결과를 확인하세요.")
+    print("\n✅ 모든 평가가 완료되었습니다. LangSmith에서 결과를 비교해보세요.")
 
 if __name__ == "__main__":
     run_evaluation()

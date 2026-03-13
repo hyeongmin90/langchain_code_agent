@@ -5,7 +5,9 @@ import concurrent.futures
 from tqdm import tqdm
 
 # 부모 디렉토리를 경로에 추가하여 모듈을 임포트할 수 있게 함
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 프로젝트 루트를 경로에 추가 (pipeline/evaluation/dataset/ -> Root)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(project_root)
 
 from pipeline.evaluation.retriever.evaluate_retriever import get_random_chunks, generate_questions
 

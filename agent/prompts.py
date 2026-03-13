@@ -49,18 +49,36 @@ REWRITE_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 # ──────────────────────────────────────────────
-# 3. Generate Prompt
+# 3. Grade Prompt
+#    - 검색된 결과가 질문에 답하기에 충분한지 판단
+# ──────────────────────────────────────────────
+GRADE_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a documentation quality grader for a Spring Framework RAG system.\n"
+        "Given a user's question and a set of retrieved documents, determine if the documents contain enough information to provide a complete and accurate answer.\n"
+        "If the information is missing, ambiguous, or irrelevant to the core question, mark 'should_rewrite' as true to trigger a query reformulation.\n"
+        "Only answer 'should_rewrite' as false if you are confident that the documents provide a direct answer."
+    ),
+    (
+        "human",
+        "Question: {question}\n\nRetrieved Context:\n{context}"
+    ),
+])
+
+# ──────────────────────────────────────────────
+# 4. Generate Prompt
 #    - 검색 결과를 바탕으로 최종 답변 생성
 # ──────────────────────────────────────────────
 GENERATE_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        "You are a helpful Spring Framework expert assistant.\n"
-        "Use ONLY the following retrieved context to answer the user's question.\n"
-        "If the context does not contain enough information, say you don't know.\n"
-        "Provide clear, code-centric answers where applicable.\n"
-        "Always answer in Korean.\n\n"
-        "Context:\n{context}"
+        "You are a technical documentation answer generator for a Spring Framework RAG system.\n"
+        "Given a user's question and a set of retrieved documents, generate a complete and accurate answer in Korean.\n"
+        "Rules:\n"
+        "- Use technical terminology from Spring Framework.\n"
+        "- Answer honestly and directly. if you don't know the answer, say so.\n"
+        "- All answers must be based on the retrieved documents. Do not answer questions that are not based on the documents. \n"
     ),
-    ("human", "{question}"),
+    ("human", "{question}\n\nRetrieved Context:\n{context}"),
 ])

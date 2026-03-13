@@ -5,7 +5,7 @@ from itertools import combinations
 from langchain_openai import OpenAIEmbeddings
 
 # 부모 디렉토리를 경로에 추가하여 모듈을 임포트할 수 있게 함
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 def cosine_similarity(vec_a, vec_b):
     """
