@@ -11,7 +11,7 @@ os.chdir(PROJECT_ROOT)
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from mcp.server.fastmcp import FastMCP
-from pipeline.storage import query_hybrid
+from pipeline.retriever import query_hybrid
 
 mcp = FastMCP("spring_docs")
 

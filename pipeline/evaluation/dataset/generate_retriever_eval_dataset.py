@@ -7,7 +7,7 @@ from tqdm import tqdm
 # 부모 디렉토리를 경로에 추가하여 모듈을 임포트할 수 있게 함
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pipeline.evaluation.evaluate_retriever import get_random_chunks, generate_questions
+from pipeline.evaluation.retriever.evaluate_retriever import get_random_chunks, generate_questions
 
 def generate_and_save_dataset(num_samples=100, output_file="evaluation_dataset.json"):
     """

@@ -22,8 +22,6 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 
-# from data_pipeline.rag_agent import search_spring_boot_docs  # legacy - 구버전 에이전트
-
 # ==========================================
 # 0. 실제 RAG 에이전트 초기화
 # ==========================================

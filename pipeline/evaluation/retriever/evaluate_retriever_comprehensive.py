@@ -10,8 +10,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 load_dotenv()
 
 from langchain_openai import OpenAIEmbeddings
-from pipeline.storage import query_documents, mmr_query_documents, query_hybrid
-from pipeline.evaluation.evaluate_redundancy import calculate_semantic_redundancy, calculate_lexical_redundancy
+from pipeline.retriever import query_hybrid, query_documents, mmr_query_documents
+from pipeline.evaluation.retriever.evaluate_redundancy import calculate_semantic_redundancy, calculate_lexical_redundancy
 
 def evaluate_retrieval(question, expected_id, method="dense", k=10):
     """

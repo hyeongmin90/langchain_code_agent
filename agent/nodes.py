@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 # 프로젝트 루트 경로를 sys.path에 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pipeline.storage import query_hybrid
+from pipeline.retriever import query_hybrid
 from agent.state import AgentState
 from agent.prompts import (
     ANALYZE_PROMPT,

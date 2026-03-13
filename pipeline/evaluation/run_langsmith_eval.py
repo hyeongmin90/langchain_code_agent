@@ -14,7 +14,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from pipeline.storage import get_vectorstore, get_hybrid_retriever
+from pipeline.storage import get_vectorstore
+from pipeline.retriever import get_hybrid_retriever
 
 # openevals is expected to be available based on previous scripts
 from openevals.prompts import CORRECTNESS_PROMPT, RAG_GROUNDEDNESS_PROMPT, RAG_RETRIEVAL_RELEVANCE_PROMPT
