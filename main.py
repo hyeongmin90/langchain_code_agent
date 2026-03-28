@@ -13,6 +13,7 @@ load_dotenv()
 init(autoreset=True)
 
 from agent import build_graph
+from agent.cache import SemanticCache
 
 
 BANNER = f"""{Fore.CYAN}
@@ -38,6 +39,13 @@ def _print_step(label: str, value: str, color: str = Fore.CYAN) -> None:
 
 def run():
     graph = build_graph()
+    cache = SemanticCache()
+
+    if cache.available:
+        print(f"{Fore.CYAN}[Cache] Redis 연결 성공 (semantic cache 활성화){Style.RESET_ALL}")
+    else:
+        print(f"{Fore.YELLOW}[Cache] Redis 연결 실패 - 캐시 없이 실행됩니다{Style.RESET_ALL}")
+
     print(BANNER)
 
     while True:
@@ -52,6 +60,13 @@ def run():
 
             print()
 
+            # 캐시 히트 확인
+            cached_answer = cache.get(user_input)
+            if cached_answer is not None:
+                _print_step("캐시", "유사 질문 캐시 히트", Fore.GREEN)
+                print(f"\n{Fore.YELLOW}Agent:{Style.RESET_ALL}\n{cached_answer}\n")
+                continue
+
             state = {
                 "question": user_input,
                 "rewritten_query": None,
@@ -60,6 +75,8 @@ def run():
                 "documents": [],
                 "answer": "",
             }
+
+            final_answer = ""
 
             for step_output in graph.stream(state, stream_mode="updates"):
                 node_name = list(step_output.keys())[0]
@@ -85,8 +102,12 @@ def run():
                     _print_step("검색 완료", f"{doc_count}개 문서 검색됨", Fore.YELLOW)
 
                 elif node_name == "generate":
-                    answer = node_result.get("answer", "")
-                    print(f"\n{Fore.YELLOW}Agent:{Style.RESET_ALL}\n{answer}\n")
+                    final_answer = node_result.get("answer", "")
+                    print(f"\n{Fore.YELLOW}Agent:{Style.RESET_ALL}\n{final_answer}\n")
+
+            # 답변 생성 후 캐시 저장
+            if final_answer:
+                cache.set(user_input, final_answer)
 
         except KeyboardInterrupt:
             print(f"\n{Fore.YELLOW}Interrupted. Goodbye!{Style.RESET_ALL}")
