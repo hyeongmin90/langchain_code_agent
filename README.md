@@ -106,9 +106,9 @@ LANGCHAIN_PROJECT="YOUR_PROJECT_NAME"
 ```
 
 ### 2. 의존성 패키지 설치
-최신 Python 환경(가상환경 권장)에서 필요 라이브러리들을 설치합니다:
+최신 Python 환경에서 필요 라이브러리들을 설치합니다:
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 3. Redis 실행
